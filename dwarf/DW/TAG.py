@@ -112,7 +112,7 @@ class DW_TAG(IntEnum):
 
     def is_type(self):
         '''Return true if the tag represents a type'''
-        return self.get_enum_value() in [
+        return self in [
                 DW_TAG.class_type,
                 DW_TAG.enumeration_type,
                 DW_TAG.string_type,
@@ -127,7 +127,7 @@ class DW_TAG(IntEnum):
                 DW_TAG.shared_type]
 
     def is_decl_context(self):
-        return self.get_enum_value() in [
+        return self in [
                 DW_TAG.class_type,
                 DW_TAG.enumeration_type,
                 DW_TAG.structure_type,
@@ -139,14 +139,14 @@ class DW_TAG(IntEnum):
         return self == DW_TAG.subprogram
 
     def has_pointer_size(self):
-        return self.get_enum_value() in [
+        return self in [
                 DW_TAG.pointer_type,
                 DW_TAG.reference_type,
                 DW_TAG.ptr_to_member_type]
 
     def get_type_kind(self):
         '''Return a type kind string.'''
-        tag = self.get_enum_value()
+        tag = self
         if tag == DW_TAG.class_type:
             return 'class'
         if tag == DW_TAG.structure_type:
@@ -176,8 +176,7 @@ class DW_TAG(IntEnum):
         return None
 
     def is_variable(self):
-        e = self.get_enum_value()
-        return e in [DW_TAG.variable, DW_TAG.formal_parameter]
+        return self in [DW_TAG.variable, DW_TAG.formal_parameter]
 
     @classmethod
     def max_width(cls):
