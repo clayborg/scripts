@@ -339,6 +339,8 @@ class DW_FORM(IntEnum):
             return (dwarf.get_line_string(strp), strp)
         elif self == DW_FORM.strx or self == DW_FORM.GNU_str_index:
             str_idx = data.get_uleb128(None)
+            if dwarf is None and die is not None:
+                dwarf = die.cu.debug_info.dwarf
             return (dwarf.get_string_at_index(str_idx, die.cu), str_idx)
         elif self == DW_FORM.strx1:
             str_idx = data.get_uint8()
