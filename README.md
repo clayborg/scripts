@@ -69,3 +69,7 @@ and show all of the DIE's child DIEs:
 ```
 $ elf.py --die=0x0002eab1 --children a.out
 ```
+Lookup an address in the DWARF:
+```
+$ elf.py --address 0xb914 a.out
+```
