@@ -113,7 +113,7 @@ def main():
     if options.pythonpackages:
         python_rsync_commands = []
         for python_module_name in python_module_names:
-            python_rsync_commands.append("rsync -av '${options.python_src_dir}/{python_module_name}' '${python_dst_dir}'")
+            python_rsync_commands.append(f"rsync -av {options.python_src_dir}/{python_module_name} {options.python_dst_dir}")
         for python_rsync_command in python_rsync_commands:
             print(python_rsync_command)
         return
