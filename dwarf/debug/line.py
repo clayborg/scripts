@@ -478,6 +478,19 @@ class File:
     dir_formats_v4 = [ FileAttribute(DW_LNCT.path, DW_FORM.string) ]
 
     @classmethod
+    def create_file_with_path(cls, fullpath, prologue):
+        if prologue.version >= 5:
+            if prologue.file_entry_format:
+                return cls(None, None, prologue, prologue.file_entry_format, fullpath)
+            raise ValueError('DWARF5 line table with no file entry format')
+        else:
+            result = cls(None, None, prologue, cls.file_formats_v4, fullpath)
+            # For DWARF4, we need to terminate when we have an empty path
+            if result.info[DW_LNCT.path] == '':
+                return None
+            return result
+
+    @classmethod
     def create_file(cls, dwarf, data, prologue):
         if prologue.version >= 5:
             if prologue.file_entry_format:
@@ -504,17 +517,20 @@ class File:
                 return None
             return result
 
-    def __init__(self, dwarf, data, prologue, formats):
-        self.path = None
+    def __init__(self, dwarf, data, prologue, formats, fullpath = None):
+        self.path = fullpath
         self.prologue = prologue
         self.info = {}
-        for format in formats:
-            (value, value_raw) = format.form.extract_value(data, None, dwarf)
-            self.info[format.lnct] = value
-            # Stop parsing any attributes if we run into an empty path for
-            # DWARF 4 and earlier DWARF versions.
-            if prologue.version < 5 and format.lnct == DW_LNCT.path and not value:
-                break
+        if data:
+            for format in formats:
+                (value, value_raw) = format.form.extract_value(data, None, dwarf)
+                self.info[format.lnct] = value
+                # Stop parsing any attributes if we run into an empty path for
+                # DWARF 4 and earlier DWARF versions.
+                if prologue.version < 5 and format.lnct == DW_LNCT.path and not value:
+                    break
+        else:
+            self.info[DW_LNCT.path] = fullpath
 
     def get_directory(self):
         if DW_LNCT.directory_index in self.info:
@@ -601,7 +617,7 @@ class Prologue:
         for (i, file) in enumerate(self.files):
             if file.dir_idx == dir_idx and file.name == basename:
                 return i+1
-        file = File()
+        file = File.create_file_with_path(fullpath, self)
         file.name = basename
         file.dir_idx = dir_idx
         file.mod_time = 0
