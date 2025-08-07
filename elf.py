@@ -303,6 +303,24 @@ class ELFOSABI(IntEnum):
     def __str__(self):
         return 'ELFOSABI_' + self.name
 
+    # We might parse ELF with OS ABIs we don't have above. We need to support
+    # displaying these unknown OS ABI values.
+    @classmethod
+    def _missing_(cls, value):
+        if isinstance(value, int):
+            return cls.create_pseudo_member_(value)
+        return None # will raise the ValueError in Enum.__new__
+
+    @classmethod
+    def create_pseudo_member_(cls, value):
+        pseudo_member = cls._value2member_map_.get(value, None)
+        if pseudo_member is None:
+            new_member = int.__new__(cls, value)
+            new_member._name_ = '_unknown_%4.4x' % value
+            new_member._value_ = value
+            pseudo_member = cls._value2member_map_.setdefault(value, new_member)
+        return pseudo_member
+
 
 # Section header types
 class SHT(IntEnum):
@@ -326,8 +344,8 @@ class SHT(IntEnum):
     SHT_RELR = 19
     LOOS = 0x60000000
     HIOS = 0x6fffffff
-    LOPROC = 0x70000000
-    HIPROC = 0x7fffffff
+    # LOPROC = 0x70000000
+    # HIPROC = 0x7fffffff
     LOUSER = 0x80000000
     HIUSER = 0xffffffff
     ANDROID_REL = 0x60000001
@@ -337,16 +355,16 @@ class SHT(IntEnum):
     GNU_verdef = 0x6ffffffd
     GNU_verneed = 0x6ffffffe
     GNU_versym = 0x6fffffff
-    ARM_EXIDX = 0x70000001
-    ARM_PREEMPTMAP = 0x70000002
-    ARM_ATTRIBUTES = 0x70000003
-    ARM_DEBUGOVERLAY = 0x70000004
-    ARM_OVERLAYSECTION = 0x70000005
-    HEX_ORDERED = 0x70000000
-    MIPS_REGINFO = 0x70000006
-    MIPS_OPTIONS = 0x7000000d
-    MIPS_DWARF = 0x7000001e
-    MIPS_ABIFLAGS = 0x7000002a
+    # ARM_EXIDX = 0x70000001
+    # ARM_PREEMPTMAP = 0x70000002
+    # ARM_ATTRIBUTES = 0x70000003
+    # ARM_DEBUGOVERLAY = 0x70000004
+    # ARM_OVERLAYSECTION = 0x70000005
+    # HEX_ORDERED = 0x70000000
+    # MIPS_REGINFO = 0x70000006
+    # MIPS_OPTIONS = 0x7000000d
+    # MIPS_DWARF = 0x7000001e
+    # MIPS_ABIFLAGS = 0x7000002a
     LLVM_ODRTAB = 0x6fff4c00
     LLVM_LINKER_OPTIONS = 0x6fff4c01
     LLVM_ADDRSIG = 0x6fff4c03
@@ -361,17 +379,35 @@ class SHT(IntEnum):
     LLVM_LTO = 0x6fff4c0c
     ANDROID_RELR = 0x6fffff00
 
-    AARCH64_AUTH_RELR = 0x70000004
-    AARCH64_MEMTAG_GLOBALS_STATIC = 0x70000007
-    AARCH64_MEMTAG_GLOBALS_DYNAMIC = 0x70000008
-    X86_64_UNWIND = 0x70000001
-    MSP430_ATTRIBUTES = 0x70000003
-    RISCV_ATTRIBUTES = 0x70000003
-    CSKY_ATTRIBUTES = 0x70000001
-    HEXAGON_ATTRIBUTES = 0x70000003
+    # AARCH64_AUTH_RELR = 0x70000004
+    # AARCH64_MEMTAG_GLOBALS_STATIC = 0x70000007
+    # AARCH64_MEMTAG_GLOBALS_DYNAMIC = 0x70000008
+    # X86_64_UNWIND = 0x70000001
+    # MSP430_ATTRIBUTES = 0x70000003
+    # RISCV_ATTRIBUTES = 0x70000003
+    # CSKY_ATTRIBUTES = 0x70000001
+    # HEXAGON_ATTRIBUTES = 0x70000003
 
     def __str__(self):
         return 'SHT_' + self.name
+
+    # We might parse ELF with SHT_XXXX defines we don't have above. We need to
+    # support displaying these unknown values;
+    @classmethod
+    def _missing_(cls, value):
+        if isinstance(value, int):
+            return cls.create_pseudo_member_(value)
+        return None # will raise the ValueError in Enum.__new__
+
+    @classmethod
+    def create_pseudo_member_(cls, value):
+        pseudo_member = cls._value2member_map_.get(value, None)
+        if pseudo_member is None:
+            new_member = int.__new__(cls, value)
+            new_member._name_ = '%4.4x' % value
+            new_member._value_ = value
+            pseudo_member = cls._value2member_map_.setdefault(value, new_member)
+        return pseudo_member
 
 
 # Special Section Indexes
