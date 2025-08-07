@@ -185,7 +185,22 @@ class DW_AT(IntEnum):
     APPLE_repository_specification = 0x2504
     APPLE_repository_import = 0x2505
     APPLE_repository_abstract_origin = 0x2506
-    LLVM_sysroot = 0x3E02
+
+    LLVM_include_path = 0x3e00
+    LLVM_config_macros = 0x3e01
+    LLVM_sysroot = 0x3e02
+    LLVM_tag_offset = 0x3e03
+    LLVM_ptrauth_key = 0x3e04
+    LLVM_ptrauth_address_discriminated = 0x3e05
+    LLVM_ptrauth_extra_discriminator = 0x3e06
+    LLVM_apinotes = 0x3e07
+    LLVM_ptrauth_isa_pointer = 0x3e08
+    LLVM_ptrauth_authenticates_null_values = 0x3e09
+    LLVM_ptrauth_authentication_mode = 0x3e0a
+    LLVM_num_extra_inhabitants = 0x3e0b
+    LLVM_stmt_sequence = 0x3e0c
+    LLVM_coro_suspend_idx = 0x3e0d
+
     APPLE_optimized = 0x3FE1
     APPLE_flags = 0x3FE2
     APPLE_isa = 0x3FE3
@@ -199,7 +214,10 @@ class DW_AT(IntEnum):
     APPLE_property_attribute = 0x3feb
     APPLE_objc_complete_type = 0x3fec
     APPLE_property = 0x3fed
-    APPLE_sdk = 0x3FEF
+    APPLE_objc_direct = 0x3fee
+    APPLE_sdk = 0x3fef
+    APPLE_origin = 0x3ff0
+    APPLE_enum_kind = 0x3ff1
 
     def __str__(self):
         return 'DW_AT_' + self.name
