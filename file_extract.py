@@ -285,9 +285,10 @@ class FileEncode:
         '''Toggle the byte order from big to little or little to big endian.'''
         self.unpack_helper = self.unpack_helper.get_swapped()
 
-    def put_c_string(self, value):
+    def put_c_string(self, value, null_terminate=True):
         self.file.write(value.encode('utf-8'))
-        self.put_sint8(0)
+        if null_terminate:
+            self.put_sint8(0)
 
     def put_sint8(self, value):
         '''Encode a int8_t into the file at the current file position'''
@@ -304,6 +305,17 @@ class FileEncode:
     def put_uint16(self, value):
         '''Encode a uint16_t into the file at the current file position'''
         self.file.write(struct.pack(self.unpack_helper.u16, value))
+
+    def put_uint24(self, value):
+        '''Encode a uint24_t into the file at the current file position'''
+        bytes = []
+        bytes.append((value >> 16) & 0xff)
+        bytes.append((value >>  8) & 0xff)
+        bytes.append((value >>  0) & 0xff)
+        if self.unpack_helper.is_little_endian():
+            bytes.reverse()
+        for byte in bytes:
+            self.put_uint8(byte)
 
     def put_sint32(self, value):
         '''Encode a int32_t into the file at the current file position'''
@@ -327,6 +339,27 @@ class FileEncode:
             self.put_uint8(0x80 | (value & 0x7f))
             value >>= 7
         self.put_uint8(value)
+
+    def put_midi_vlq(self, value):
+        '''Encodes an integer into a MIDI variable-length quantity (VLQ) byte sequence.'''
+        if value < 0:
+            raise ValueError("can't encode an negative number as a into a MIDI variable-length quantity (VLQ) byte sequence")
+
+        # Encode as a single byte for performance
+        if value < 127:
+            self.put_uint8(value)
+            return
+
+        bytes = []
+        msbit = 0x00  # low-order byte has high bit cleared.
+        while value > 0:
+            bytes.append(((value & 0x7f) | msbit) & 0xff)
+            value >>= 7
+            msbit = 0x80
+        bytes.reverse()  # put most-significant byte first, least significant last
+        # Save the bytes out in reverse order.
+        for byte in bytes:
+            self.put_uint8(byte)
 
     def put_sleb128(self, value):
         if value < 0:
@@ -823,6 +856,21 @@ class FileExtract:
             result |= (byte & 0x7f) << shift
             shift += 7
         return result
+
+    def get_midi_vlq(self, fail_value=0):
+        """Decodes a MIDI variable-length quantity (VLQ) from a sequence of bytes."""
+        value = 0
+        while True:
+            byte = self.get_uint8(None)
+            if byte is None:
+                return fail_value
+            # Shift the current value 7 bits to the left to make space for the next 7 bits
+            value = (value << 7) | (byte & 0x7F)
+            # Check if the most significant bit (MSB) is set.
+            # If it's not set (byte & 0x80 == 0), this is the last byte.
+            if not (byte & 0x80):
+                break
+        return value
 
     def get_sleb128(self, fail_value=0):
         result = 0
