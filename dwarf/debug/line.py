@@ -530,7 +530,11 @@ class File:
                 if prologue.version < 5 and format.lnct == DW_LNCT.path and not value:
                     break
         else:
-            self.info[DW_LNCT.path] = fullpath
+            for format in formats:
+                if format.lnct == DW_LNCT.path:
+                    self.info[format.lnct] = fullpath
+                else:
+                    self.info[format.lnct] = 0
 
     def get_directory(self):
         if DW_LNCT.directory_index in self.info:
@@ -571,6 +575,17 @@ class File:
                 f.write('%s=%s' % (attr_name, str(value)))
         f.write(' }')
 
+    def encode(self, version, debug_line):
+        if version <= 4:
+            for format in File.file_formats_v4:
+                value = self.info[format.lnct]
+                if format.lnct == DW_LNCT.path:
+                    debug_line.put_c_string(value)
+                else:
+                    debug_line.put_uleb128(value)
+
+        else:
+            raise ValueError("DWARF 5 line table generation isn't supported")
 
 class Prologue:
     def __init__(self):
@@ -732,7 +747,7 @@ class Prologue:
         # Terminate directories
         debug_line.put_uint8(0)
         for file in self.files:
-            file.encode(debug_line)
+            file.encode(self.version, debug_line)
         # Terminate files
         debug_line.put_uint8(0)
         end_header_offset = debug_line.tell()

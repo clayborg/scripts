@@ -314,7 +314,7 @@ class CompileUnit:
                                         self.prologue.offset)
             # Add a DW_AT_stmt_list to the compile unit DIE with the
             # right offset
-            self.die.addSectionOffsetAttribute(DW_AT_stmt_list,
+            self.die.addSectionOffsetAttribute(DW_AT.stmt_list,
                                                 self.prologue.offset)
 
         # Now calculate the CU offset and let each DIE calculate its offset
@@ -543,13 +543,13 @@ class DIE:
     def addDeltaRangeAttributes(self, low_pc, high_pc):
         '''Add low and high PC attributes to a DIE where the high PC is an
            offset from the low pc.'''
-        self.addAttribute(DW_AT_low_pc, DW_FORM.addr, low_pc)
-        self.addDataAttribute(DW_AT_high_pc, high_pc - low_pc)
+        self.addAttribute(DW_AT.low_pc, DW_FORM.addr, low_pc)
+        self.addDataAttribute(DW_AT.high_pc, high_pc - low_pc)
 
     def addRangeAttributes(self, low_pc, high_pc):
         '''Add low and high PC attributes to a DIE using absolute addresses.'''
-        self.addAttribute(DW_AT_low_pc, DW_FORM.addr, low_pc)
-        self.addAttribute(DW_AT_high_pc, DW_FORM.addr, high_pc)
+        self.addAttribute(DW_AT.low_pc, DW_FORM.addr, low_pc)
+        self.addAttribute(DW_AT.high_pc, DW_FORM.addr, high_pc)
 
     def addChild(self, tag):
         die = DIE(self.cu, tag)
