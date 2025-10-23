@@ -306,8 +306,12 @@ class Entry:
             else:
                 f.write(', ')
             f.write('%s=%u' % (get_color_attr(value.get_attr()), value.value))
-        f.write(', die_offset = %#8.8x' % (self.get_die_offset()))
-        f.write(', name = "%s"' % (self.get_name()))
+        (dwarf_unit, skeleton_cu) = self.get_dwarf_units()
+        if skeleton_cu:
+            f.write(' (dwarf_unit = %#8.8x skeleton_cu = %#8.8x die = %#8.8x' % (dwarf_unit.offset, skeleton_cu.offset, self.get_die_offset()))
+        else:
+            f.write(' (dwarf_unit = %#8.8x die = %#8.8x' % (dwarf_unit.offset, self.get_die_offset()))
+        f.write(', name = "%s")' % (self.get_name()))
         f.write('\n')
         (die, description) = self.get_die_and_desciption()
         if description:
