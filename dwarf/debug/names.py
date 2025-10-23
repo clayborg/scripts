@@ -605,7 +605,7 @@ class Header:
         idx = self.get_bucket(bucket_idx)
         if idx == 0:
             # print('empty bucket_idx')
-            return None
+            return (None, None)
         while idx < self.name_count:
             curr_hash = self.get_hash(idx)
             # print('hash[%u] = %#8.8x' % (idx, curr_hash))
