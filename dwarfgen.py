@@ -68,7 +68,7 @@ def create_options():
         '--cu-ranges',
         action='store_true',
         dest='generate_cu_ranges',
-        help='Auto generate the DW_AT_ranges for each compile unit.',
+        help='Auto generate the DW_AT.ranges for each compile unit.',
         default=False)
     return parser
 
@@ -83,11 +83,11 @@ def generate_dwarf(options, args):
     dwarfgen = DWARF(dwarf_info)
 
     # cu = dwarfgen.addCompileUnit(DW_TAG.compile_unit)
-    # attr_name = cu.die.addAttribute(DW_AT_name, DW_FORM_strp, "main.c")
+    # attr_name = cu.die.addAttribute(DW_AT.name, DW_FORM_strp, "main.c")
     # cu = dwarfgen.addCompileUnit(DW_TAG.compile_unit)
-    # attr_name = cu.die.addAttribute(DW_AT_name, DW_FORM_strp, "./main.c")
+    # attr_name = cu.die.addAttribute(DW_AT.name, DW_FORM_strp, "./main.c")
     # cu = dwarfgen.addCompileUnit(DW_TAG.compile_unit)
-    # attr_name = cu.die.addAttribute(DW_AT_name, DW_FORM_strp, ".//main.c")
+    # attr_name = cu.die.addAttribute(DW_AT.name, DW_FORM_strp, ".//main.c")
     # infos = [
     #     # Test "." in paths
     #     (".", "main.c", "./main.c"),
@@ -128,17 +128,17 @@ def generate_dwarf(options, args):
     # ]
     # for info in infos:
     #     cu = dwarfgen.addCompileUnit(DW_TAG.compile_unit)
-    #     attr_name = cu.die.addAttribute(DW_AT_name, DW_FORM_strp, info[1])
+    #     attr_name = cu.die.addAttribute(DW_AT.name, DW_FORM_strp, info[1])
     #     if info[0]:
-    #         attr_name = cu.die.addAttribute(DW_AT_comp_dir, DW_FORM_strp,
+    #         attr_name = cu.die.addAttribute(DW_AT.comp_dir, DW_FORM_strp,
     #                                         info[0])
 
     # cu = dwarfgen.addCompileUnit(DW_TAG.compile_unit)
-    # attr_name = cu.die.addAttribute(DW_AT_name, DW_FORM_strp, "main.c")
-    # attr_name = cu.die.addAttribute(DW_AT_comp_dir, DW_FORM_strp, "/../..")
+    # attr_name = cu.die.addAttribute(DW_AT.name, DW_FORM_strp, "main.c")
+    # attr_name = cu.die.addAttribute(DW_AT.comp_dir, DW_FORM_strp, "/../..")
     #
     # cu = dwarfgen.addCompileUnit(DW_TAG.compile_unit)
-    # attr_name = cu.die.addAttribute(DW_AT_name, DW_FORM_strp, ".//bar/main.c")
+    # attr_name = cu.die.addAttribute(DW_AT.name, DW_FORM_strp, ".//bar/main.c")
 
     # cu2 = dwarfgen.addCompileUnit(DW_TAG.compile_unit)
 
@@ -147,10 +147,69 @@ def generate_dwarf(options, args):
     cu1.die.addAttribute(DW_AT.name, DW_FORM.strp, cu1_path)
     cu1.die.addAttribute(DW_AT.language, DW_FORM.udata, 2)
 
-    func2_die = cu1.die.addChild(DW_TAG.subprogram)
-    func_ranges = AddressRangeList()
-    func_ranges.append(AddressRange(0x1000, 0x1050))
-    func_ranges.append(AddressRange(0x2000, 0x2050))
+# 0x00000025:   DW_TAG.base_type
+#                 DW_AT.name	("char")
+#                 DW_AT.encoding	(DW_ATE.signed_char)
+#                 DW_AT.byte_size	(0x01)
+
+    char_type_die = cu1.die.addBaseTypeChild("int", DW_ATE.signed_char, 4)
+
+
+# 0x00000029:   DW_TAG.base_type
+#                 DW_AT.name	("__ARRAY_SIZE_TYPE__")
+#                 DW_AT.byte_size	(0x08)
+#                 DW_AT.encoding	(DW_ATE.unsigned)
+
+    array_size_type_die = cu1.die.addBaseTypeChild("__ARRAY_SIZE_TYPE__",
+                                                   DW_ATE.unsigned,
+                                                   8)
+
+# 0x00000065:   DW_TAG.array_type
+#                 DW_AT.type	(0x0000000000000025 "char")
+
+# 0x0000006a:     DW_TAG.subrange_type
+#                   DW_AT.type	(0x0000000000000029 "__ARRAY_SIZE_TYPE__")
+#                   DW_AT.count	(0x20)
+
+# 0x00000070:     NULL
+
+    array_type_die = cu1.die.addChild(DW_TAG.array_type)
+    array_type_die.addReferenceAttribute(DW_AT.type, char_type_die)
+
+    union_byte_size = 0x20
+    subrange_type_die = array_type_die.addChild(DW_TAG.subrange_type)
+    subrange_type_die.addReferenceAttribute(DW_AT.type, array_size_type_die)
+    subrange_type_die.addDataAttribute(DW_AT.count, union_byte_size)
+
+    # 0x0000004c:   DW_TAG_union_type
+    #                 DW_AT_calling_convention	(DW_CC_pass_by_value)
+    #                 DW_AT_name	("UnionType")
+    #                 DW_AT_byte_size	(0x20)
+    #                 DW_AT_decl_file	("/Users/gclayton/Documents/src/union/main.cpp")
+    #                 DW_AT_decl_line	(3)
+
+    # 0x00000052:     DW_TAG_member
+    #                   DW_AT_name	("value")
+    #                   DW_AT_type	(0x0000000000000048 "int")
+    #                   DW_AT_decl_file	("/Users/gclayton/Documents/src/union/main.cpp")
+    #                   DW_AT_decl_line	(4)
+    #                   DW_AT_data_member_location	(0x00)
+
+    union_type_die = cu1.die.addChild(DW_TAG.union_type)
+    union_type_die.addNameAttribute("UnionType")
+    union_type_die.addDataAttribute(DW_AT.byte_size, union_byte_size)
+
+    union_member1 = union_type_die.addChild(DW_TAG.member)
+    union_member1.addNameAttribute("array")
+    union_member1.addReferenceAttribute(DW_AT.type, array_type_die)
+
+    func_die = cu1.die.addChild(DW_TAG.subprogram)
+    func_die.addRangeAttributes(0x1000, 0x1050)
+    func_die.addAttribute(DW_AT.name, DW_FORM.string, "foo")
+    func_die.addReferenceAttribute(DW_AT.type, union_member1)
+
+    # func_die.addAttribute(DW_AT.ranges, DW_FORM_sec_offset, func_ranges)
+
     # namespace_a_die = cu1.die.addChild(DW_TAG.namespace)
     # namespace_a_die.addAttribute(DW_AT.name, DW_FORM.string, "a")
 
@@ -158,26 +217,18 @@ def generate_dwarf(options, args):
     # a_foo_die.addAttribute(DW_AT.name, DW_FORM.string, "struct_t")
 
 
-    # func_die = namespace_a_die.addChild(DW_TAG.subprogram)
-    # func_die.addAttribute(DW_AT.name, DW_FORM.string, "foo")
 
-    # a_foo_die = func_die.addChild(DW_TAG.structure_type)
-    # a_foo_die.addAttribute(DW_AT.name, DW_FORM.string, "struct_t")
-
-    # func_die.addAttribute(DW_AT_linkage_name, DW_FORM_strp, "")
-    # func_die.addAttribute(DW_AT_ranges, DW_FORM_sec_offset, func_ranges)
-    # func_die.addRangeAttributes(0x1000, 0x1050)
-    inline_path = "/tmp/inline.h"
-    cu1.add_line_entry(cu1_path, 10, 0x1000)
-    cu1.add_line_entry(cu1_path, 11, 0x1010)
-    cu1.add_line_entry(inline_path, 20, 0x1100)
-    cu1.add_line_entry(cu1_path, 12, 0x1010)
-    cu1.add_line_entry(cu1_path, 13, 0x1050, True)
+    # inline_path = "/tmp/inline.h"
+    # cu1.add_line_entry(cu1_path, 10, 0x1000)
+    # cu1.add_line_entry(cu1_path, 11, 0x1010)
+    # cu1.add_line_entry(inline_path, 20, 0x1100)
+    # cu1.add_line_entry(cu1_path, 12, 0x1010)
+    # cu1.add_line_entry(cu1_path, 13, 0x1050, True)
 
     # func_die = cu1.die.addChild(DW_TAG.subprogram)
-    # func_die.addAttribute(DW_AT_name, DW_FORM_strp, "bar")
-    # # func_die.addAttribute(DW_AT_linkage_name, DW_FORM_strp, "")
-    # # func_die.addAttribute(DW_AT_ranges, DW_FORM_sec_offset, func_ranges)
+    # func_die.addAttribute(DW_AT.name, DW_FORM_strp, "bar")
+    # # func_die.addAttribute(DW_AT.linkage_name, DW_FORM_strp, "")
+    # # func_die.addAttribute(DW_AT.ranges, DW_FORM_sec_offset, func_ranges)
     # func_die.addRangeAttributes(0x1000, 0x1100)
 
     # inline_ranges = AddressRangeList()
@@ -187,39 +238,39 @@ def generate_dwarf(options, args):
 
 
     # inline_die = func_die.addChild(DW_TAG.inlined_subroutine)
-    # inline_die.addAttribute(DW_AT_name, DW_FORM_strp, "inline_with_invalid_call_file")
+    # inline_die.addAttribute(DW_AT.name, DW_FORM_strp, "inline_with_invalid_call_file")
     # inline_die.addRangeAttributes(0x1010, 0x1020)
-    # inline_die.addAttribute(DW_AT_call_file, DW_FORM_data4, 10)
-    # inline_die.addAttribute(DW_AT_call_line, DW_FORM_data4, 11)
+    # inline_die.addAttribute(DW_AT.call_file, DW_FORM_data4, 10)
+    # inline_die.addAttribute(DW_AT.call_line, DW_FORM_data4, 11)
 
     # inline_die = inline_die.addChild(DW_TAG.inlined_subroutine)
-    # inline_die.addAttribute(DW_AT_name, DW_FORM_strp, "inline_inside_parent_with_invalid_call_file")
+    # inline_die.addAttribute(DW_AT.name, DW_FORM_strp, "inline_inside_parent_with_invalid_call_file")
     # inline_die.addRangeAttributes(0x1010, 0x1015)
-    # inline_die.addAttribute(DW_AT_call_file, DW_FORM_data4, 1)
-    # inline_die.addAttribute(DW_AT_call_line, DW_FORM_data4, 12)
+    # inline_die.addAttribute(DW_AT.call_file, DW_FORM_data4, 1)
+    # inline_die.addAttribute(DW_AT.call_line, DW_FORM_data4, 12)
 
     # inline_die = func_die.addChild(DW_TAG.inlined_subroutine)
-    # inline_die.addAttribute(DW_AT_name, DW_FORM_strp, "inline_with_valid_call_file")
+    # inline_die.addAttribute(DW_AT.name, DW_FORM_strp, "inline_with_valid_call_file")
     # inline_die.addRangeAttributes(0x1020, 0x1030)
-    # inline_die.addAttribute(DW_AT_call_file, DW_FORM_data4, 1)
-    # inline_die.addAttribute(DW_AT_call_line, DW_FORM_data4, 13)
+    # inline_die.addAttribute(DW_AT.call_file, DW_FORM_data4, 1)
+    # inline_die.addAttribute(DW_AT.call_line, DW_FORM_data4, 13)
 
     # inline_die = inline_die.addChild(DW_TAG.inlined_subroutine)
-    # inline_die.addAttribute(DW_AT_name, DW_FORM_strp, "inline_inside_parent_with_valid_call_file")
+    # inline_die.addAttribute(DW_AT.name, DW_FORM_strp, "inline_inside_parent_with_valid_call_file")
     # inline_die.addRangeAttributes(0x1020, 0x1025)
-    # inline_die.addAttribute(DW_AT_call_file, DW_FORM_data4, 1)
-    # inline_die.addAttribute(DW_AT_call_line, DW_FORM_data4, 14)
+    # inline_die.addAttribute(DW_AT.call_file, DW_FORM_data4, 1)
+    # inline_die.addAttribute(DW_AT.call_line, DW_FORM_data4, 14)
 
     # func_die = cu1.die.addChild(DW_TAG.subprogram)
-    # func_die.addAttribute(DW_AT_name, DW_FORM_strp, "func_with_valid_decl_file")
-    # func_die.addDataAttribute(DW_AT_decl_file, 1)
-    # func_die.addDataAttribute(DW_AT_decl_line, 20)
+    # func_die.addAttribute(DW_AT.name, DW_FORM_strp, "func_with_valid_decl_file")
+    # func_die.addDataAttribute(DW_AT.decl_file, 1)
+    # func_die.addDataAttribute(DW_AT.decl_line, 20)
     # func_die.addRangeAttributes(0x2000, 0x2050)
 
     # func_die = cu1.die.addChild(DW_TAG.subprogram)
-    # func_die.addAttribute(DW_AT_name, DW_FORM_strp, "func_with_invalid_decl_file")
-    # func_die.addDataAttribute(DW_AT_decl_file, 10)
-    # func_die.addDataAttribute(DW_AT_decl_line, 20)
+    # func_die.addAttribute(DW_AT.name, DW_FORM_strp, "func_with_invalid_decl_file")
+    # func_die.addDataAttribute(DW_AT.decl_file, 10)
+    # func_die.addDataAttribute(DW_AT.decl_line, 20)
     # func_die.addRangeAttributes(0x3000, 0x3050)
 
     # inline_ranges = AddressRangeList()
@@ -228,29 +279,29 @@ def generate_dwarf(options, args):
     # # inline_ranges.append(AddressRange(0x3015, 0x3020))
 
     # inline_die2 = inline_die.addChild(DW_TAG.inlined_subroutine)
-    # inline_die2.addAttribute(DW_AT_name, DW_FORM_strp, "inline2")
-    # inline_die2.addAttribute(DW_AT_ranges, DW_FORM_sec_offset, inline_ranges)
-    # inline_die2.addAttribute(DW_AT_call_file, DW_FORM_data4, 2)
-    # inline_die2.addAttribute(DW_AT_call_line, DW_FORM_data4, 21)
+    # inline_die2.addAttribute(DW_AT.name, DW_FORM_strp, "inline2")
+    # inline_die2.addAttribute(DW_AT.ranges, DW_FORM_sec_offset, inline_ranges)
+    # inline_die2.addAttribute(DW_AT.call_file, DW_FORM_data4, 2)
+    # inline_die2.addAttribute(DW_AT.call_line, DW_FORM_data4, 21)
 
     # func_die = cu1.die.addChild(DW_TAG.subprogram)
-    # func_die.addAttribute(DW_AT_name, DW_FORM_strp, "bar")
-    # func_die.addAttribute(DW_AT_low_pc, DW_FORM_addr, 0x2000)
-    # func_die.addAttribute(DW_AT_high_pc, DW_FORM_addr, 0x2050)
+    # func_die.addAttribute(DW_AT.name, DW_FORM_strp, "bar")
+    # func_die.addAttribute(DW_AT.low_pc, DW_FORM_addr, 0x2000)
+    # func_die.addAttribute(DW_AT.high_pc, DW_FORM_addr, 0x2050)
 
     # cu2 = dwarfgen.addCompileUnit(DW_TAG.compile_unit)
-    # cu2.die.addAttribute(DW_AT_name, DW_FORM_strp, cu1_path)
-    # cu2.die.addAttribute(DW_AT_language, DW_FORM_udata, 2)
+    # cu2.die.addAttribute(DW_AT.name, DW_FORM_strp, cu1_path)
+    # cu2.die.addAttribute(DW_AT.language, DW_FORM_udata, 2)
 
     # func_die = cu2.die.addChild(DW_TAG.subprogram)
-    # func_die.addAttribute(DW_AT_name, DW_FORM_strp, "foo")
-    # func_die.addAttribute(DW_AT_low_pc, DW_FORM_addr, 0x1000)
-    # func_die.addAttribute(DW_AT_high_pc, DW_FORM_addr, 0x1050)
+    # func_die.addAttribute(DW_AT.name, DW_FORM_strp, "foo")
+    # func_die.addAttribute(DW_AT.low_pc, DW_FORM_addr, 0x1000)
+    # func_die.addAttribute(DW_AT.high_pc, DW_FORM_addr, 0x1050)
 
     # func_die = cu2.die.addChild(DW_TAG.subprogram)
-    # func_die.addAttribute(DW_AT_name, DW_FORM_strp, "bar")
-    # func_die.addAttribute(DW_AT_low_pc, DW_FORM_addr, 0x2000)
-    # func_die.addAttribute(DW_AT_high_pc, DW_FORM_addr, 0x2050)
+    # func_die.addAttribute(DW_AT.name, DW_FORM_strp, "bar")
+    # func_die.addAttribute(DW_AT.low_pc, DW_FORM_addr, 0x2000)
+    # func_die.addAttribute(DW_AT.high_pc, DW_FORM_addr, 0x2050)
 
     # cu2.add_line_entry(cu1_path, 20, 0x2000)
     # cu2.add_line_entry(cu1_path, 21, 0x2050, True)
@@ -271,20 +322,20 @@ def generate_dwarf(options, args):
     # cu_ranges.append(AddressRange(0, 0))
     # cu_ranges.append(AddressRange(0, 0))
     # cu.get_aranges().address_ranges = cu_ranges
-    #cu.die.addAttribute(DW_AT_ranges, DW_FORM_sec_offset, cu_ranges)
+    #cu.die.addAttribute(DW_AT.ranges, DW_FORM_sec_offset, cu_ranges)
 
     # cu = dwarfgen.addCompileUnit(DW_TAG.compile_unit)
     # cu.dwarf_info.addr_size = 4
     # cu_path = "/tmp/foo.c"
     # # inline_path = "/tmp/inline.h"
-    # cu.die.addAttribute(DW_AT_name, DW_FORM_strp, cu_path)
-    # # cu.die.addAttribute(DW_AT_low_pc, DW_FORM_addr, 0x1000)
-    # # cu.die.addAttribute(DW_AT_high_pc, DW_FORM_data4, 0x1000)
-    # cu.die.addAttribute(DW_AT_language, DW_FORM_data2, DW_LANG_C)
+    # cu.die.addAttribute(DW_AT.name, DW_FORM_strp, cu_path)
+    # # cu.die.addAttribute(DW_AT.low_pc, DW_FORM_addr, 0x1000)
+    # # cu.die.addAttribute(DW_AT.high_pc, DW_FORM_data4, 0x1000)
+    # cu.die.addAttribute(DW_AT.language, DW_FORM_data2, DW_LANG_C)
     # cu_ranges = AddressRangeList()
     # cu_ranges.append(AddressRange(0x2000, 0x2100))
     # cu_ranges.append(AddressRange(0x2300, 0x2400))
-    # cu.die.addAttribute(DW_AT_ranges, DW_FORM_sec_offset, cu_ranges)
+    # cu.die.addAttribute(DW_AT.ranges, DW_FORM_sec_offset, cu_ranges)
 
     # cu.add_line_entry(cu_path, 10, 0x1000)
     # cu.add_line_entry(inline_path, 20, 0x1100)
@@ -293,40 +344,40 @@ def generate_dwarf(options, args):
     # cu.add_line_entry(cu_path, 12, 0x2000, True)
 
     # 0x00000073:   DW_TAG.structure_type
-    #                 DW_AT_containing_type	(0x0000000000000073)
-    #                 DW_AT_calling_convention	(DW_CC_pass_by_reference)
-    #                 DW_AT_name	("DefaultDtor")
-    #                 DW_AT_byte_size	(0x08)
-    #                 DW_AT_decl_file	("/tmp/main.cpp")
-    #                 DW_AT_decl_line	(1)
+    #                 DW_AT.containing_type	(0x0000000000000073)
+    #                 DW_AT.calling_convention	(DW_CC_pass_by_reference)
+    #                 DW_AT.name	("DefaultDtor")
+    #                 DW_AT.byte_size	(0x08)
+    #                 DW_AT.decl_file	("/tmp/main.cpp")
+    #                 DW_AT.decl_line	(1)
     # func_die = cu.die.addChild(DW_TAG.subprogram)
-    # func_die.addAttribute(DW_AT_name, DW_FORM_strp, "stripped1")
-    # func_die.addAttribute(DW_AT_low_pc, DW_FORM_addr, 0)
-    # func_die.addAttribute(DW_AT_high_pc, DW_FORM_data4, 0x20)
+    # func_die.addAttribute(DW_AT.name, DW_FORM_strp, "stripped1")
+    # func_die.addAttribute(DW_AT.low_pc, DW_FORM_addr, 0)
+    # func_die.addAttribute(DW_AT.high_pc, DW_FORM_data4, 0x20)
 
 
     # func_die = cu.die.addChild(DW_TAG.subprogram)
-    # func_die.addAttribute(DW_AT_name, DW_FORM_strp, "stripped2")
-    # func_die.addAttribute(DW_AT_low_pc, DW_FORM_addr, 0)
-    # func_die.addAttribute(DW_AT_high_pc, DW_FORM_addr, 0x30)
+    # func_die.addAttribute(DW_AT.name, DW_FORM_strp, "stripped2")
+    # func_die.addAttribute(DW_AT.low_pc, DW_FORM_addr, 0)
+    # func_die.addAttribute(DW_AT.high_pc, DW_FORM_addr, 0x30)
 
     # int_die = cu1.die.addChild(DW_TAG.base_type)
     # int_die.addNameAttribute("int")
-    # int_die.addDataAttribute(DW_AT_encoding, DW_ATE_signed)
-    # int_die.addDataAttribute(DW_AT_byte_size, 4)
+    # int_die.addDataAttribute(DW_AT.encoding, DW_ATE.signed)
+    # int_die.addDataAttribute(DW_AT.byte_size, 4)
 
 
     # inline_die = func_die.addChild(DW_TAG.inlined_subroutine)
-    # inline_die.addAttribute(DW_AT_name, DW_FORM_strp, "inline1")
+    # inline_die.addAttribute(DW_AT.name, DW_FORM_strp, "inline1")
     # inline_die.addRangeAttributes(0x1100, 0x1200)
-    # inline_die.addAttribute(DW_AT_call_file, DW_FORM_data4, 1)
-    # inline_die.addAttribute(DW_AT_call_line, DW_FORM_data4, 11)
+    # inline_die.addAttribute(DW_AT.call_file, DW_FORM_data4, 1)
+    # inline_die.addAttribute(DW_AT.call_line, DW_FORM_data4, 11)
 
     # inline_die2 = inline_die.addChild(DW_TAG.inlined_subroutine)
-    # inline_die2.addAttribute(DW_AT_name, DW_FORM_strp, "inline2")
+    # inline_die2.addAttribute(DW_AT.name, DW_FORM_strp, "inline2")
     # inline_die2.addRangeAttributes(0x1150, 0x1180)
-    # inline_die2.addAttribute(DW_AT_call_file, DW_FORM_data4, 2)
-    # inline_die2.addAttribute(DW_AT_call_line, DW_FORM_data4, 21)
+    # inline_die2.addAttribute(DW_AT.call_file, DW_FORM_data4, 2)
+    # inline_die2.addAttribute(DW_AT.call_line, DW_FORM_data4, 21)
 
     # cu1.add_line_entry(cu1_path, 0, 0, True)
 
@@ -342,166 +393,166 @@ def generate_dwarf(options, args):
     # cu.add_line_entry(inline_path, 122, 0x1170)
 
     # func_die.addRangeAttributes(0x1000, 0x2000)
-    # func_die.addAttribute(DW_AT_decl_file, DW_FORM_strp, "")
-    # func_die.addDataAttribute(DW_AT_call_line, 5)
+    # func_die.addAttribute(DW_AT.decl_file, DW_FORM_strp, "")
+    # func_die.addDataAttribute(DW_AT.call_line, 5)
 
     # inline_die = func_die.addChild(DW_TAG.inlined_subroutine)
-    # inline_die.addAttribute(DW_AT_name, DW_FORM_strp, "inline1")
-    # inline_die.addAttribute(DW_AT_low_pc, DW_FORM_addr, 0x1100)
-    # inline_die.addAttribute(DW_AT_high_pc, DW_FORM_data4, 0x100)
-    # inline_die.addAttribute(DW_AT_call_file, DW_FORM_strp, "")
-    # inline_die.addDataAttribute(DW_AT_call_line, 10)
+    # inline_die.addAttribute(DW_AT.name, DW_FORM_strp, "inline1")
+    # inline_die.addAttribute(DW_AT.low_pc, DW_FORM_addr, 0x1100)
+    # inline_die.addAttribute(DW_AT.high_pc, DW_FORM_data4, 0x100)
+    # inline_die.addAttribute(DW_AT.call_file, DW_FORM_strp, "")
+    # inline_die.addDataAttribute(DW_AT.call_line, 10)
 
 
     # func_die = cu.die.addChild(DW_TAG.subprogram)
-    # func_die.addAttribute(DW_AT_name, DW_FORM_strp, "stripped")
+    # func_die.addAttribute(DW_AT.name, DW_FORM_strp, "stripped")
     # func_die.addRangeAttributes(0xffffffffffffffff, 0x3000)
 
     # var_die = func_die.addChild(DW_TAG.variable)
     # var_die.addNameAttribute("foo")
-    # var_die.addReferenceAttribute(DW_AT_type, int_die)
+    # var_die.addReferenceAttribute(DW_AT.type, int_die)
 
     # func_die = cu.die.addChild(DW_TAG.subprogram)
-    # func_die.addAttribute(DW_AT_name, DW_FORM_strp, "foo")
-    # func_die.addAttribute(DW_AT_low_pc, DW_FORM_addr, 0x2000)
-    # func_die.addAttribute(DW_AT_high_pc, DW_FORM_data4, 0x1000)
+    # func_die.addAttribute(DW_AT.name, DW_FORM_strp, "foo")
+    # func_die.addAttribute(DW_AT.low_pc, DW_FORM_addr, 0x2000)
+    # func_die.addAttribute(DW_AT.high_pc, DW_FORM_data4, 0x1000)
 
 
     # type_die = cu1.die.addChild(DW_TAG.base_type)
     # type_die.addNameAttribute("long")
-    # type_die.addDataAttribute(DW_AT_encoding, DW_ATE_signed)
-    # type_die.addDataAttribute(DW_AT_byte_size, 8)
+    # type_die.addDataAttribute(DW_AT.encoding, DW_ATE.signed)
+    # type_die.addDataAttribute(DW_AT.byte_size, 8)
 
     # int_die = cu1.die.addChild(DW_TAG.base_type)
     # int_die.addNameAttribute("int")
-    # int_die.addDataAttribute(DW_AT_encoding, DW_ATE_signed)
-    # int_die.addDataAttribute(DW_AT_byte_size, 4)
+    # int_die.addDataAttribute(DW_AT.encoding, DW_ATE.signed)
+    # int_die.addDataAttribute(DW_AT.byte_size, 4)
 
 
     # struct_die = cu.die.addChild(DW_TAG.structure_type)
-    # struct_die.addAttribute(DW_AT_name, DW_FORM_strp, "unused_struct")
-    # struct_die.addDataAttribute(DW_AT_byte_size, 4)
-    # struct_die.addFileAttribute(DW_AT_decl_file, cu_path)
-    # struct_die.addDataAttribute(DW_AT_decl_line, 20)
+    # struct_die.addAttribute(DW_AT.name, DW_FORM_strp, "unused_struct")
+    # struct_die.addDataAttribute(DW_AT.byte_size, 4)
+    # struct_die.addFileAttribute(DW_AT.decl_file, cu_path)
+    # struct_die.addDataAttribute(DW_AT.decl_line, 20)
 
     # member_die = struct_die.addChild(DW_TAG.member)
     # member_die.addNameAttribute("x")
-    # member_die.addReferenceAttribute(DW_AT_type, int_die)
+    # member_die.addReferenceAttribute(DW_AT.type, int_die)
 
     # func_die = cu.die.addChild(DW_TAG.subprogram)
-    # func_die.addAttribute(DW_AT_name, DW_FORM_strp, "stripped3")
-    # func_die.addAttribute(DW_AT_low_pc, DW_FORM_addr, 0x4000)
-    # func_die.addAttribute(DW_AT_high_pc, DW_FORM_addr, 0x3fff)
+    # func_die.addAttribute(DW_AT.name, DW_FORM_strp, "stripped3")
+    # func_die.addAttribute(DW_AT.low_pc, DW_FORM_addr, 0x4000)
+    # func_die.addAttribute(DW_AT.high_pc, DW_FORM_addr, 0x3fff)
 
     # cu.add_line_entry(cu_path, 11, 0x1000)
     # cu.add_line_entry(cu_path, 12, 0x1200)
     # cu.add_line_entry(cu_path, 12, 0x2000, True)
 
     # func_die = cu.die.addChild(DW_TAG.subprogram)
-    # func_die.addAttribute(DW_AT_name, DW_FORM_strp, "lines_with_decl")
-    # func_die.addAttribute(DW_AT_low_pc, DW_FORM_addr, 0x2000)
-    # func_die.addAttribute(DW_AT_high_pc, DW_FORM_data4, 0x1000)
-    # func_die.addAttribute(DW_AT_decl_file, DW_FORM_data1, 1)
-    # func_die.addAttribute(DW_AT_decl_line, DW_FORM_data1, 20)
+    # func_die.addAttribute(DW_AT.name, DW_FORM_strp, "lines_with_decl")
+    # func_die.addAttribute(DW_AT.low_pc, DW_FORM_addr, 0x2000)
+    # func_die.addAttribute(DW_AT.high_pc, DW_FORM_data4, 0x1000)
+    # func_die.addAttribute(DW_AT.decl_file, DW_FORM_data1, 1)
+    # func_die.addAttribute(DW_AT.decl_line, DW_FORM_data1, 20)
 
     # cu.add_line_entry(cu_path, 21, 0x2000)
     # cu.add_line_entry(cu_path, 22, 0x2200)
     # cu.add_line_entry(cu_path, 22, 0x3000, True)
 
     # func_die = cu.die.addChild(DW_TAG.subprogram)
-    # func_die.addAttribute(DW_AT_name, DW_FORM_strp, "no_lines_no_decl")
-    # func_die.addAttribute(DW_AT_low_pc, DW_FORM_addr, 0x3000)
-    # func_die.addAttribute(DW_AT_high_pc, DW_FORM_data4, 0x1000)
+    # func_die.addAttribute(DW_AT.name, DW_FORM_strp, "no_lines_no_decl")
+    # func_die.addAttribute(DW_AT.low_pc, DW_FORM_addr, 0x3000)
+    # func_die.addAttribute(DW_AT.high_pc, DW_FORM_data4, 0x1000)
 
     # func_die = cu.die.addChild(DW_TAG.subprogram)
-    # func_die.addAttribute(DW_AT_name, DW_FORM_strp, "no_lines_with_decl")
-    # func_die.addAttribute(DW_AT_low_pc, DW_FORM_addr, 0x4000)
-    # func_die.addAttribute(DW_AT_high_pc, DW_FORM_data4, 0x1000)
-    # func_die.addAttribute(DW_AT_decl_file, DW_FORM_data1, 1)
-    # func_die.addAttribute(DW_AT_decl_line, DW_FORM_data1, 40)
+    # func_die.addAttribute(DW_AT.name, DW_FORM_strp, "no_lines_with_decl")
+    # func_die.addAttribute(DW_AT.low_pc, DW_FORM_addr, 0x4000)
+    # func_die.addAttribute(DW_AT.high_pc, DW_FORM_data4, 0x1000)
+    # func_die.addAttribute(DW_AT.decl_file, DW_FORM_data1, 1)
+    # func_die.addAttribute(DW_AT.decl_line, DW_FORM_data1, 40)
 
 
     # inline_die = func_die.addChild(DW_TAG.inlined_subroutine)
-    # inline_die.addAttribute(DW_AT_name, DW_FORM_strp, "inline1")
-    # inline_die.addAttribute(DW_AT_low_pc, DW_FORM_addr, 0x1100)
-    # inline_die.addAttribute(DW_AT_high_pc, DW_FORM_data4, 0x100)
-    # inline_die.addAttribute(DW_AT_call_file, DW_FORM_data4, 1)
-    # inline_die.addAttribute(DW_AT_call_line, DW_FORM_data4, 10)
+    # inline_die.addAttribute(DW_AT.name, DW_FORM_strp, "inline1")
+    # inline_die.addAttribute(DW_AT.low_pc, DW_FORM_addr, 0x1100)
+    # inline_die.addAttribute(DW_AT.high_pc, DW_FORM_data4, 0x100)
+    # inline_die.addAttribute(DW_AT.call_file, DW_FORM_data4, 1)
+    # inline_die.addAttribute(DW_AT.call_line, DW_FORM_data4, 10)
 
 
-    # attr_name = cu.die.addAttribute(DW_AT_comp_dir, DW_FORM_strp, ".")
-    # cu.die.addAttribute(DW_AT_low_pc, DW_FORM_addr, 0x1000)
-    # cu.die.addAttribute(DW_AT_high_pc, DW_FORM_addr, 0x2000)
+    # attr_name = cu.die.addAttribute(DW_AT.comp_dir, DW_FORM_strp, ".")
+    # cu.die.addAttribute(DW_AT.low_pc, DW_FORM_addr, 0x1000)
+    # cu.die.addAttribute(DW_AT.high_pc, DW_FORM_addr, 0x2000)
 
     # cu.add_line_entry(cu_path, 12, 0x1000)
     # cu.add_line_entry(cu_path, 14, 0x1010)
     # cu.add_line_entry(cu_path, 16, 0x1020)
     # cu.add_line_entry(cu_path, 16, 0x1030, True)
     # cu = dwarfgen.addCompileUnit(DW_TAG.compile_unit)
-    # attr_name = cu.die.addAttribute(DW_AT_name, DW_FORM_strp, "main.c")
-    # attr_name = cu.die.addAttribute(DW_AT_comp_dir, DW_FORM_strp, "./")
+    # attr_name = cu.die.addAttribute(DW_AT.name, DW_FORM_strp, "main.c")
+    # attr_name = cu.die.addAttribute(DW_AT.comp_dir, DW_FORM_strp, "./")
     #
     # cu = dwarfgen.addCompileUnit(DW_TAG.compile_unit)
-    # attr_name = cu.die.addAttribute(DW_AT_name, DW_FORM_strp, "main.c")
-    # attr_name = cu.die.addAttribute(DW_AT_comp_dir, DW_FORM_strp, ".//")
+    # attr_name = cu.die.addAttribute(DW_AT.name, DW_FORM_strp, "main.c")
+    # attr_name = cu.die.addAttribute(DW_AT.comp_dir, DW_FORM_strp, ".//")
     #
     # cu = dwarfgen.addCompileUnit(DW_TAG.compile_unit)
-    # attr_name = cu.die.addAttribute(DW_AT_name, DW_FORM_strp, "main.c")
-    # attr_name = cu.die.addAttribute(DW_AT_comp_dir, DW_FORM_strp, ".///")
+    # attr_name = cu.die.addAttribute(DW_AT.name, DW_FORM_strp, "main.c")
+    # attr_name = cu.die.addAttribute(DW_AT.comp_dir, DW_FORM_strp, ".///")
     #
     # cu = dwarfgen.addCompileUnit(DW_TAG.compile_unit)
-    # attr_name = cu.die.addAttribute(DW_AT_name, DW_FORM_strp, "main.c")
-    # attr_name = cu.die.addAttribute(DW_AT_comp_dir, DW_FORM_strp, ".///bar")
+    # attr_name = cu.die.addAttribute(DW_AT.name, DW_FORM_strp, "main.c")
+    # attr_name = cu.die.addAttribute(DW_AT.comp_dir, DW_FORM_strp, ".///bar")
     #
     # cu = dwarfgen.addCompileUnit(DW_TAG.compile_unit)
-    # attr_name = cu.die.addAttribute(DW_AT_name, DW_FORM_strp, "main.c")
-    # attr_name = cu.die.addAttribute(DW_AT_comp_dir, DW_FORM_strp, ".///bar/baz")
+    # attr_name = cu.die.addAttribute(DW_AT.name, DW_FORM_strp, "main.c")
+    # attr_name = cu.die.addAttribute(DW_AT.comp_dir, DW_FORM_strp, ".///bar/baz")
 
 
-    # attr_name = cu2.die.addAttribute(DW_AT_name, DW_FORM_strp, cu_filepath2)
+    # attr_name = cu2.die.addAttribute(DW_AT.name, DW_FORM_strp, cu_filepath2)
 
     # func_die = cu.die.addChild(DW_TAG.subprogram)
-    # func_die.addAttribute(DW_AT_name, DW_FORM_strp, "main")
-    # func_die.addAttribute(DW_AT_low_pc, DW_FORM_addr, 0x1000)
-    # func_die.addAttribute(DW_AT_high_pc, DW_FORM_addr, 0x2000)
+    # func_die.addAttribute(DW_AT.name, DW_FORM_strp, "main")
+    # func_die.addAttribute(DW_AT.low_pc, DW_FORM_addr, 0x1000)
+    # func_die.addAttribute(DW_AT.high_pc, DW_FORM_addr, 0x2000)
     #
     # func_die = cu.die.addChild(DW_TAG.subprogram)
-    # func_die.addAttribute(DW_AT_name, DW_FORM_strp, "elided")
-    # func_die.addAttribute(DW_AT_low_pc, DW_FORM_addr, 0x2000)
-    # func_die.addAttribute(DW_AT_high_pc, DW_FORM_addr, 0x2000)
+    # func_die.addAttribute(DW_AT.name, DW_FORM_strp, "elided")
+    # func_die.addAttribute(DW_AT.low_pc, DW_FORM_addr, 0x2000)
+    # func_die.addAttribute(DW_AT.high_pc, DW_FORM_addr, 0x2000)
 
     # block_die = func_die.addChild(DW_TAG.lexical_block)
-    # block_die.addAttribute(DW_AT_low_pc, DW_FORM_addr, 0x1100)
-    # block_die.addAttribute(DW_AT_high_pc, DW_FORM_addr, 0x1300)
+    # block_die.addAttribute(DW_AT.low_pc, DW_FORM_addr, 0x1100)
+    # block_die.addAttribute(DW_AT.high_pc, DW_FORM_addr, 0x1300)
     #
     # block_die = func_die.addChild(DW_TAG.lexical_block)
-    # block_die.addAttribute(DW_AT_low_pc, DW_FORM_addr, 0x12ff)
-    # block_die.addAttribute(DW_AT_high_pc, DW_FORM_addr, 0x1300)
+    # block_die.addAttribute(DW_AT.low_pc, DW_FORM_addr, 0x12ff)
+    # block_die.addAttribute(DW_AT.high_pc, DW_FORM_addr, 0x1300)
 
     # cu.add_line_entry(cu_filepath, 10, 0x1000)
     # cu.add_line_entry(cu_filepath, 10, 0x1100, True)
-    # cu2.die.addAttribute(DW_AT_stmt_list, DW_FORM_sec_offset, 0x0)
+    # cu2.die.addAttribute(DW_AT.stmt_list, DW_FORM_sec_offset, 0x0)
     # cu_ranges = AddressRangeList()
     # cu_ranges.append(AddressRange(0x1000, 0x1500))
-    # attr_low_pc = cu.die.addAttribute(DW_AT_ranges, DW_FORM_data4, cu_ranges)
+    # attr_low_pc = cu.die.addAttribute(DW_AT.ranges, DW_FORM_data4, cu_ranges)
     #
     # class_die = cu.die.addChild(DW_TAG.class_type)
-    # class_die.addAttribute(DW_AT_name, DW_FORM_strp, "Foo")
+    # class_die.addAttribute(DW_AT.name, DW_FORM_strp, "Foo")
 
     # method_die = class_die.addChild(DW_TAG.subprogram)
-    # method_die.addAttribute(DW_AT_name, DW_FORM_strp, "Bar")
-    # method_die.addAttribute(DW_AT_low_pc, DW_FORM_addr, 0x3000)
-    # method_die.addAttribute(DW_AT_high_pc, DW_FORM_addr, 0x4000)
+    # method_die.addAttribute(DW_AT.name, DW_FORM_strp, "Bar")
+    # method_die.addAttribute(DW_AT.low_pc, DW_FORM_addr, 0x3000)
+    # method_die.addAttribute(DW_AT.high_pc, DW_FORM_addr, 0x4000)
 
     # method_die = class_die.addChild(DW_TAG.subprogram)
-    # method_die.addAttribute(DW_AT_name, DW_FORM_strp, "Baz")
-    # method_die.addAttribute(DW_AT_low_pc, DW_FORM_addr, 0x4000)
-    # method_die.addAttribute(DW_AT_high_pc, DW_FORM_data4, 0x1000)
+    # method_die.addAttribute(DW_AT.name, DW_FORM_strp, "Baz")
+    # method_die.addAttribute(DW_AT.low_pc, DW_FORM_addr, 0x4000)
+    # method_die.addAttribute(DW_AT.high_pc, DW_FORM_data4, 0x1000)
     #
     #
     # block_die = method_die.addChild(DW_TAG.lexical_block)
-    # block_die.addAttribute(DW_AT_low_pc, DW_FORM_addr, 0x2100)
-    # block_die.addAttribute(DW_AT_high_pc, DW_FORM_addr, 0x2200)
+    # block_die.addAttribute(DW_AT.low_pc, DW_FORM_addr, 0x2100)
+    # block_die.addAttribute(DW_AT.high_pc, DW_FORM_addr, 0x2200)
 
     # Populate the .debug_aranges
     if options.generate_debug_aranges:
@@ -590,9 +641,9 @@ if __name__ == '__main__':
 #         # ]
 #         # for info in infos:
 #         #     cu = dwarfgen.addCompileUnit(DW_TAG.compile_unit)
-#         #     attr_name = cu.die.addAttribute(DW_AT_name, DW_FORM_strp, info[1])
+#         #     attr_name = cu.die.addAttribute(DW_AT.name, DW_FORM_strp, info[1])
 #         #     if info[0]:
-#         #         attr_name = cu.die.addAttribute(DW_AT_comp_dir, DW_FORM_strp,
+#         #         attr_name = cu.die.addAttribute(DW_AT.comp_dir, DW_FORM_strp,
 #         #                                         info[0])
 #         # Populate the .debug_aranges
 #         if options.generate_debug_aranges:
