@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
+from enum import IntEnum
 import file_extract
 import sys
 
+DEFAULT_DIVISIONS = 960
+
 class Header:
     chunk_id = 'MThd'
-    def __init__(self, format=1, num_tracks=0, divisions=480):
+
+    def __init__(self, format=1, num_tracks=0, divisions=DEFAULT_DIVISIONS):
         self.format = format
         self.num_tracks = num_tracks
         self.divisions = divisions
@@ -25,6 +29,7 @@ class Header:
 
     def dump(self, f=sys.stdout):
         f.write("%s: format=%u, num_tracks=%u divisions=%u\n" % (self.chunk_id, self.format, self.num_tracks, self.divisions))
+
 
 class Status:
     def __init__(self, type, channel):
@@ -52,8 +57,10 @@ class Status:
     def dump(self, f=sys.stdout):
         f.write(f'type={self.type:x}, channel={self.channel}')
 
+
 class NoteOffEvent:
     status_type = 8
+
     def __init__(self, delta_t, midi_channel, note, velocity):
         self.event = Event(delta_t, Status(self.status_type, midi_channel))
         self.note = note
@@ -75,8 +82,10 @@ class NoteOffEvent:
         self.event.dump(f)
         f.write(f'Event -- Note Off: note={self.note}, velocity={self.velocity}\n')
 
+
 class NoteOnEvent:
     status_type = 9
+
     def __init__(self, delta_t, midi_channel, note, velocity):
         self.event = Event(delta_t, Status(self.status_type, midi_channel))
         self.note = note
@@ -101,6 +110,7 @@ class NoteOnEvent:
 
 class MetaEventTrackName:
     meta_type = 0x3
+
     def __init__(self, delta_t, track_name):
         self.event = Event(delta_t, Status(0xff, None))
         self.track_name = track_name
@@ -123,6 +133,7 @@ class MetaEventTrackName:
 
 class MetaEventInstrumentName:
     meta_type = 0x4
+
     def __init__(self, delta_t, name):
         self.event = Event(delta_t, Status(0xff, None))
         self.name = name
@@ -176,6 +187,7 @@ class MetaEventMidiChannelPrefix:
     events, thus restoring the original structure.
     '''
     meta_type = 0x20
+
     def __init__(self, delta_t, channel):
         self.event = Event(delta_t, Status(0xff, None))
         self.channel = channel
@@ -198,6 +210,7 @@ class MetaEventMidiChannelPrefix:
 
 class MetaEventEndOfTrack:
     meta_type = 0x2f
+
     def __init__(self, delta_t):
         self.event = Event(delta_t, Status(0xff, None))
 
@@ -217,6 +230,7 @@ class MetaEventEndOfTrack:
 
 class MetaEventTempo:
     meta_type = 0x51
+
     def __init__(self, delta_t, tempo):
         self.event = Event(delta_t, Status(0xff, None))
         self.tempo = tempo
@@ -237,23 +251,39 @@ class MetaEventTempo:
         self.event.dump(f)
         f.write(f'{self.__class__.__name__}: tempo={self.tempo} usec/quarter note ({60000000/self.tempo} bpm)\n')
 
+
 class MetaEventSMPTEOffset:
     '''
     SMPTE Offset
 
-FF 54 05 hr mn se fr ff
+    FF 54 05 hr mn se fr ff
 
-hr is a byte specifying the hour, which is also encoded with the SMPTE format (frame rate), just as it is in MIDI Time Code, i.e. 0rrhhhhh, where :
-rr = frame rate : 00 = 24 fps, 01 = 25 fps, 10 = 30 fps (drop frame), 11 = 30 fps (non-drop frame)
-hhhhh = hour (0-23)
-mn se are 2 bytes specifying the minutes (0-59) and seconds (0-59), respectively.
-fr is a byte specifying the number of frames (0-23/24/28/29, depending on the frame rate specified in the hr byte).
-ff is a byte specifying the number of fractional frames, in 100ths of a frame (even in SMPTE-based tracks using a different frame subdivision, defined in the MThd chunk).
-This optional event, if present, should occur at the start of a track, at time = 0, and prior to any MIDI events. It is used to specify the SMPTE time at which the track is to start.
+    hr is a byte specifying the hour, which is also encoded with the SMPTE
+    format (frame rate), just as it is in MIDI Time Code, i.e. 0rrhhhhh, where
+    :
 
-For a format 1 MIDI file, a SMPTE Offset Meta event should only occur within the first MTrk chunk.
+    rr = frame rate : 00 = 24 fps, 01 = 25 fps, 10 = 30 fps (drop frame), 11 =
+    30 fps (non-drop frame)
+
+    hhhhh = hour (0-23)
+
+    mn se are 2 bytes specifying the minutes (0-59) and seconds (0-59),
+    respectively.
+
+    fr is a byte specifying the number of frames (0-23/24/28/29, depending on
+    the frame rate specified in the hr byte).
+
+    ff is a byte specifying the number of fractional frames, in 100ths of a
+    frame (even in SMPTE-based tracks using a different frame subdivision,
+    defined in the MThd chunk). This optional event, if present, should occur
+    at the start of a track, at time = 0, and prior to any MIDI events. It is
+    used to specify the SMPTE time at which the track is to start.
+
+    For a format 1 MIDI file, a SMPTE Offset Meta event should only occur
+    within the first MTrk chunk.
     '''
     meta_type = 0x54
+
     def __init__(self, delta_t, hr, mn, se, fr, ff):
         self.event = Event(delta_t, Status(0xff, None))
         self.hr = hr
@@ -287,7 +317,6 @@ For a format 1 MIDI file, a SMPTE Offset Meta event should only occur within the
         f.write(f'{self.__class__.__name__}: hr={self.hr} mn={self.mn} se={self.se} fr={self.fr} ff={self.ff}\n')
 
 
-
 class MetaEventTimeSignature:
     '''
     Time Signature
@@ -304,10 +333,11 @@ class MetaEventTimeSignature:
 
     bb is a byte specifying the number of notated 32nd-notes in a MIDI
     quarter-note (24 MIDI Clocks). The usual value for this parameter is 8,
-    though some sequencers allow the user to specify that what MIDI thinks of as
-    a quarter note, should be notated as something else.
+    though some sequencers allow the user to specify that what MIDI thinks of
+    as a quarter note, should be notated as something else.
     '''
     meta_type = 0x58
+
     def __init__(self, delta_t, nn, dd, cc=24, bb=8):
         self.event = Event(delta_t, Status(0xff, None))
         self.nn = nn
@@ -336,6 +366,7 @@ class MetaEventTimeSignature:
     def dump(self, f=sys.stdout):
         self.event.dump(f)
         f.write(f'{self.__class__.__name__}: signature={self.nn}/{2 ** self.dd} cc={self.cc} bb={self.bb}\n')
+
 
 class MetaEventKeySignature:
     '''
@@ -447,6 +478,7 @@ class MetaEvent:
         self.event.dump(f)
         f.write(f'Meta Event: meta_type=0x{self.meta_type:x}, length={self.data.get_size()}\n')
 
+
 class Event:
     type_to_class = {
         NoteOffEvent.status_type: NoteOffEvent,
@@ -454,17 +486,15 @@ class Event:
         MetaEvent.status_type: MetaEvent
     }
 
-    def __init__(self, delta_t, status, offset = None):
+    def __init__(self, delta_t, status):
         self.delta_t = delta_t
         self.status = status
-        self.offset = offset
 
     @classmethod
     def decode(cls, data, running_status):
-        offset = data.tell()
         delta_t = data.get_midi_vlq()
         status = Status.decode(data, running_status)
-        event = Event(delta_t, status, offset)
+        event = Event(delta_t, status)
         if event.status.type not in cls.type_to_class:
             print(f"Unsupported event nibble {event.status.type}")
             return None
@@ -476,13 +506,80 @@ class Event:
         self.status.encode(data)
 
     def dump(self, f=sys.stdout):
-        if self.offset is not None:
-            f.write(f'0x{self.offset:8x}: ')
-        f.write(f'{self.delta_t:5d} ');
+        f.write(f'{self.delta_t:5d} ')
+
+
+NOTE_TO_MIDI_NUMBER = {
+    'C': 12,
+    'D': 14,
+    'E': 16,
+    'F': 17,
+    'G': 19,
+    'A': 21,
+    'B': 23,
+}
+
+
+def note_name_to_midi_note(note_name):
+    semi_tone_offset = 0
+    note_letter = note_name[0]
+    if '#' == note_name[1]:
+        # We have a sharp
+        semi_tone_offset = 1
+        octave = int(note_name[2:])
+    elif 'b' == note_name[1]:
+        # We have a flat
+        semi_tone_offset = -1
+        octave = int(note_name[2:])
+    else:
+        octave = int(note_name[1:])
+
+    if note_letter not in NOTE_TO_MIDI_NUMBER:
+        message = f'Invalid note letter {note_letter}, valid values are {NOTE_TO_MIDI_NUMBER.keys()}'
+        raise ValueError(message)
+    root_midi_number = NOTE_TO_MIDI_NUMBER[note_letter]
+    midi_number = root_midi_number + semi_tone_offset + octave * 12
+    if midi_number < 0 or midi_number > 127:
+        message = f'Midi number {midi_number} for "{note_name}" cannot be represented as a midi note number between 0 and 127.'
+        raise ValueError(message)
+    return midi_number
+
+
+class Duration(IntEnum):
+    Whole = DEFAULT_DIVISIONS*4,
+    Half = DEFAULT_DIVISIONS*2,
+    Quarter = DEFAULT_DIVISIONS,
+    Eighth = DEFAULT_DIVISIONS/2,
+    Sixteenth = DEFAULT_DIVISIONS/4,
+    ThirtySecond = DEFAULT_DIVISIONS/8,
+    SixtyFourth = DEFAULT_DIVISIONS/16,
+
 
 class Track:
     chunk_id = 'MTrk'
-    def __init__(self, events = None):
+
+    class Note:
+        '''
+        A class representing a note in a track.
+
+        This class isn't meant to represent the midi note on or note off event,
+        it is designed as a way to internally represent notes with exact
+        locations in a track.
+        '''
+        def __init__(self,
+                     time: int,  # Absolute time in in ticks from the start
+                     on_velocity: int,
+                     off_velocity: int,
+                     duration: Duration):
+            self.time = time
+            self.on_velocity = on_velocity
+            self.off_velocity = off_velocity
+            self.duration = duration
+
+    def __init__(self, events=None):
+        self.time_signature_beats = 4
+        self.time_signature_note = Duration.Quarter
+        self.notes = []
         if events is None:
             self.events = []
         else:
@@ -534,8 +631,32 @@ class Track:
         '''
         self.events.append(MetaEventKeySignature.create_from_key_name(key_name))
 
+    def calculate_time(self, measure: int, beat: float):
+        '''
+        Calculate the absolute tick from the start of the song to the specified
+        measure and beat.
+        '''
+        ticks_per_beat = int(self.time_signature_note)
+        ticks_per_measure = self.time_signature_beats * ticks_per_beat
+        time = (measure - 1) * ticks_per_measure + int(beat * ticks_per_beat)
+        return time
+
+    def get_ticks_per_measure(self):
+        return
+
     def set_time_signature(self, top: int, bottom: int):
-        '''Set the time signature from the top and bottom number of the time signature.'''
+        '''
+        Set the time signature from the top and bottom number of the time
+        signature.
+        '''
+        self.time_signature_beats = top
+        if bottom == 4:
+            self.time_signature_note = Duration.Quarter
+        elif bottom == 2:
+            self.time_signature_note = Duration.Half
+        elif bottom == 8:
+            self.time_signature_note = Duration.Eighth
+
         dd = 1
         while True:
             curr_bottom = 2 ** dd
@@ -546,6 +667,20 @@ class Track:
                 raise ValueError(message)
             dd += 1
         self.events.append(MetaEventTimeSignature(delta_t=0, nn=top, dd=dd))
+
+    def add_note(self,
+                 note_name,
+                 measure,
+                 beat,
+                 velocity=100,
+                 off_velocity=None,
+                 duration=Duration.Quarter):
+        if off_velocity is None:
+            off_velocity = velocity
+        time = self.calculate_time(measure, beat)
+        note = Track.Note(time, velocity, off_velocity, duration)
+        self.notes.append(note)
+        pass
 
     def dump(self, f=sys.stdout):
         f.write(f"{self.chunk_id}:\n")
@@ -560,6 +695,7 @@ class Chunk:
         Header.chunk_id: Header,
         Track.chunk_id: Track
     }
+
     def __init__(self, data = None):
         self.offset = None
         self.id = None
@@ -592,6 +728,7 @@ class Chunk:
             chunk_class = cls.chunk_id_to_class[chunk.id]
             return chunk_class.decode(chunk.data)
         return None
+
 
 class File:
     def __init__(self, data = None):
@@ -636,6 +773,7 @@ def main(args):
             midi_file = File(data)
             midi_file.dump()
     else:
+
         midi_file = File()
         track1 = midi_file.add_track()
         track1.set_tempo(120.0)
@@ -643,12 +781,22 @@ def main(args):
         track1.set_instrument_name('Grand Piano')
         track1.set_time_signature(4, 4)
         track1.set_key_signature('Am')
-        track1.events.append(NoteOnEvent(delta_t=0, midi_channel=0, note=60, velocity=100))
-        track1.events.append(NoteOffEvent(delta_t=480*2, midi_channel=0, note=60, velocity=0))
-        track1.events.append(NoteOnEvent(delta_t=0, midi_channel=0, note=62, velocity=100))
-        track1.events.append(NoteOffEvent(delta_t=480, midi_channel=0, note=62, velocity=0))
-        track1.events.append(NoteOnEvent(delta_t=0, midi_channel=0, note=64, velocity=100))
-        track1.events.append(NoteOffEvent(delta_t=240, midi_channel=0, note=64, velocity=0))
+        track1.add_note('C4',
+                        measure=1,
+                        beat=1.0,
+                        velocity=99,
+                        duration=Duration.Quarter)
+        track1.add_note('D4',
+                        measure=1,
+                        beat=2.0,
+                        velocity=98,
+                        duration=Duration.Eighth)
+        # track1.events.append(NoteOnEvent(delta_t=0, midi_channel=0, note=60, velocity=100))
+        # track1.events.append(NoteOffEvent(delta_t=480*2, midi_channel=0, note=60, velocity=0))
+        # track1.events.append(NoteOnEvent(delta_t=0, midi_channel=0, note=62, velocity=100))
+        # track1.events.append(NoteOffEvent(delta_t=480, midi_channel=0, note=62, velocity=0))
+        # track1.events.append(NoteOnEvent(delta_t=0, midi_channel=0, note=64, velocity=100))
+        # track1.events.append(NoteOffEvent(delta_t=240, midi_channel=0, note=64, velocity=0))
         track1.events.append(MetaEventEndOfTrack(delta_t=0))
         midi_file.dump()
         midi_file.save('/Users/gclayton/Documents/midi/save.mid')
