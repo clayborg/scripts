@@ -4,14 +4,14 @@
 import file_extract
 
 # Python Imports
+import binascii
 import copy
 import io
+import os
 import shlex
-import shutil
 import subprocess
 import sys
 import tempfile
-import os
 
 # Package Imports
 from dwarf.defines import is_string
@@ -21,6 +21,7 @@ import dwarf.debug.abbrev
 import dwarf.debug.line
 from dwarf.defines import UINT32_MAX, UINT64_MAX
 from dwarf.DW.AT import DW_AT
+from dwarf.DW.ATE import *
 from dwarf.DW.FORM import *
 from dwarf.DW.LANG import *
 from dwarf.DW.TAG import *
@@ -256,14 +257,14 @@ class CompileUnit:
         if len(ranges):
             base_addr = ranges.get_min_address()
             if base_addr >= 0:
-                self.die.addAttribute(DW_AT_low_pc, DW_FORM.addr, base_addr)
+                self.die.addAttribute(DW_AT.low_pc, DW_FORM.addr, base_addr)
                 # Make all of the range information relative to the
                 # compile unit base address
                 for range in ranges:
                     range.lo -= base_addr
                     range.hi -= base_addr
             if ranges:
-                self.die.addAttribute(DW_AT_ranges, DW_FORM.sec_offset, ranges)
+                self.die.addAttribute(DW_AT.ranges, DW_FORM.sec_offset, ranges)
 
     def get_aranges(self):
         if self.aranges is None:
@@ -315,7 +316,7 @@ class CompileUnit:
             # Add a DW_AT_stmt_list to the compile unit DIE with the
             # right offset
             self.die.addSectionOffsetAttribute(DW_AT.stmt_list,
-                                                self.prologue.offset)
+                                               self.prologue.offset)
 
         # Now calculate the CU offset and let each DIE calculate its offset
         # so we can correctly emit relative and absolute DIE references in
@@ -502,9 +503,13 @@ class DIE:
         self.attributes.append(attr)
         return attr
 
+    def addStringAttribute(self, attr, s):
+        '''Add a string attribute using DW_FORM_strp.'''
+        return self.addAttribute(attr, DW_FORM.strp, s)
+
     def addNameAttribute(self, name):
         '''Add a name attribute using DW_AT_name and DW_FORM_strp.'''
-        return self.addAttribute(DW_AT_name, DW_FORM.strp, name)
+        return self.addStringAttribute(DW_AT.name, name)
 
     def addDataAttribute(self, attr, value):
         '''Add an integer attribute and select the right DW_FORM_data encoding.'''
@@ -556,6 +561,13 @@ class DIE:
         self.children.append(die)
         return die
 
+    def addBaseTypeChild(self, name: str, encoding: DW_ATE, byte_size: int):
+        die = self.addChild(DW_TAG.base_type)
+        die.addNameAttribute(name)
+        die.addDataAttribute(DW_AT.encoding, encoding)
+        die.addDataAttribute(DW_AT.byte_size, byte_size)
+        return die
+
     def createAbbrevDecl(self):
         abbrev = dwarf.debug.abbrev.Decl()
         abbrev.tag = self.tag
@@ -594,19 +606,19 @@ class DIE:
 
     def get_die_ranges(self):
         ranges = AddressRangeList()
-        if self.tag == DW_TAG_subprogram:
+        if self.tag == DW_TAG.subprogram:
             lo_pc = None
             hi_pc = None
             hi_pc_is_offset = False
             for attribute in self.attributes:
                 attr = attribute.get_attr()
-                if attr == DW_AT_low_pc:
+                if attr == DW_AT.low_pc:
                     lo_pc = attribute.value
-                elif attr == DW_AT_high_pc:
+                elif attr == DW_AT.high_pc:
                     hi_pc = attribute.value
                     if attribute.get_form() != DW_FORM.addr:
                         hi_pc_is_offset = True
-                elif attr == DW_AT_ranges:
+                elif attr == DW_AT.ranges:
                     if isinstance(attribute.value, AddressRangeList):
                         ranges.append(attribute.value)
                     else:
