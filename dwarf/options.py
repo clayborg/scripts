@@ -259,6 +259,14 @@ def append_dwarf_options(parser):
         default=None,
         help='Set the max string length to display. Default is no limit.')
     parser.add_option(
+        '--max-matches',
+        type='int',
+        metavar='<integer>',
+        dest='max_matches',
+        default=None,
+        help=('Set the max number of matches to display for --name. '
+              'Default is no limit.'))
+    parser.add_option(
         '--optimize',
         type='string',
         dest='optimize_path',
@@ -329,17 +337,21 @@ def get_color_tag(tag):
     colorizer = get_colorizer()
     return colorizer.blue() + str(tag) + colorizer.reset()
 
+
 def get_color_attr(attr):
     colorizer = get_colorizer()
     return colorizer.cyan() + str(attr) + colorizer.reset()
+
 
 def get_color_error(s):
     colorizer = get_colorizer()
     return colorizer.red() + s + colorizer.reset()
 
+
 def get_color_warning(s):
     colorizer = get_colorizer()
     return colorizer.yellow() + s + colorizer.reset()
+
 
 def colorize_error_or_warning(s):
     if s.startswith('error:'):
@@ -348,6 +360,7 @@ def colorize_error_or_warning(s):
         return get_color_warning(s)
     else:
         return s
+
 
 def get_color_form(form):
     colorizer = get_colorizer()

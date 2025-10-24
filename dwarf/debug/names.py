@@ -145,6 +145,17 @@ class AttrValue:
             f.write('(%#x)' % (self.value))
 
 
+class ResolvedEntry:
+    '''Represents all of the components that match for a given entry'''
+    def __init__(self, entry, cu, skeleton_cu, die, error=None, warning=None):
+        self.entry = entry
+        self.cu = cu
+        self.skeleton_cu = skeleton_cu
+        self.die = die
+        self.error = error
+        self.warning = warning
+
+
 class Entry:
     '''Represents a single accelerator table entry.'''
     def __init__(self, offset, abbrev, values):
@@ -208,7 +219,7 @@ class Entry:
     def get_tu_type_signature(self):
         return self.abbrev.header.get_foreign_type_signature(self.tu_idx);
 
-    def get_die_and_desciption(self):
+    def get_die_and_desciption(self) -> ResolvedEntry:
         '''
             Given the entry, find the DWARF DIE for this entry.
 
@@ -238,7 +249,13 @@ class Entry:
             if cu.is_skeleton():
                 dwo_unit = cu.get_dwo_unit()
                 if not dwo_unit:
-                    return (None, "error: can't find DWO with ID %#16.16x" % (cu.dwo_id))
+                    return ResolvedEntry(
+                        entry=self,
+                        cu=None,
+                        skeleton_cu=cu,
+                        die=None,
+                        error="error: can't find DWO with ID %#16.16x" % (cu.dwo_id))
+                skeleton_cu = cu
                 cu = dwo_unit
             die = cu.get_die_with_offset(cu.offset + self.rel_die_offset)
             if foreign_tu and skeleton_cu:
@@ -248,15 +265,34 @@ class Entry:
                 # print('foreign_tu_dwo_name: "%s"' % (foreign_tu_dwo_name))
                 if skeleton_dwo_name != foreign_tu_dwo_name:
                     if skeleton_dwo_name and foreign_tu_dwo_name and skeleton_dwo_name.startswith(foreign_tu_dwo_name):
-                        return (die, 'warning: accepting skeleton DWO name that starts with foreign TU DWO name')
+                        return ResolvedEntry(
+                            entry=self,
+                            cu=cu,
+                            skeleton_cu=skeleton_cu,
+                            die=die,
+                            warning="error: can't find DWO with ID %#16.16x" % (cu.dwo_id))
                     else:
                         # print('Ignoring DWO mismatch for foreign TU:\nForeign TU:')
                         # die.dump_ancestry()
                         # print('Originating skeleton DWO DIE:')
                         # skeleton_cu_die.dump_ancestry()
-                        return (None, 'error: type unit DWO name mismatch:\n%s\n%s' % (skeleton_dwo_name, foreign_tu_dwo_name))
-            return (die, None)
-        return (None, 'error: die not found')
+                        return ResolvedEntry(
+                            entry=self,
+                            cu=cu,
+                            skeleton_cu=skeleton_cu,
+                            die=None,
+                            error='error: type unit DWO name mismatch:\n%s\n%s' % (skeleton_dwo_name, foreign_tu_dwo_name))
+            return ResolvedEntry(
+                entry=self,
+                cu=cu,
+                skeleton_cu=skeleton_cu,
+                die=die)
+        return ResolvedEntry(
+            entry=self,
+            cu=cu,
+            skeleton_cu=skeleton_cu,
+            die=None,
+            error='error: die not found')
 
     def get_dwarf_units(self):
         '''
@@ -281,6 +317,8 @@ class Entry:
             cu = debug_info.get_dwarf_unit_with_offset(cu_offset)
             if cu is None:
                 raise ValueError('missing CU for %#8.8x' % (cu_offset))
+            if cu.is_skeleton:
+                return (cu.get_dwo_unit(), cu)
             return (cu, None)
         raise ValueError('missing CU, TU, or foreign TU attributes')
 
@@ -295,34 +333,33 @@ class Entry:
             return self.abbrev.header.get_string(self.name_idx)
         return None
 
-    def dump_resolved(self, f=sys.stdout):
-        f.write("Entry @ %#8.8x: %s " % (self.offset,
-                                         get_color_tag(self.abbrev.get_tag())))
-        debug_info = self.abbrev.header.debug_names.dwarf_ctx.get_debug_info()
-        first = True
-        for value in self.values:
-            if first:
-                first = False
-            else:
-                f.write(', ')
-            f.write('%s=%u' % (get_color_attr(value.get_attr()), value.value))
-        (dwarf_unit, skeleton_cu) = self.get_dwarf_units()
-        if skeleton_cu:
-            f.write(' (dwarf_unit = %#8.8x skeleton_cu = %#8.8x die = %#8.8x' % (dwarf_unit.offset, skeleton_cu.offset, self.get_die_offset()))
-        else:
-            f.write(' (dwarf_unit = %#8.8x die = %#8.8x' % (dwarf_unit.offset, self.get_die_offset()))
-        f.write(', name = "%s")' % (self.get_name()))
+    def dump_resolved(self, options, f=sys.stdout):
+        f.write('Entry @ ')
+        self.dump(options, f=f)
         f.write('\n')
-        (die, description) = self.get_die_and_desciption()
-        if description:
-            f.write(colorize_error_or_warning(description))
+        resolved_entry = self.get_die_and_desciption()
+        if resolved_entry.error:
+            f.write(colorize_error_or_warning(resolved_entry.error))
             f.write('\n')
+        if resolved_entry.warning:
+            f.write(colorize_error_or_warning(resolved_entry.warning))
+            f.write('\n')
+        die = resolved_entry.die
         if die:
+            if resolved_entry.skeleton_cu:
+                f.write('Skeleton CU:\n')
+                resolved_entry.skeleton_cu.dump(verbose=False, f=f, max_depth=0)
             if die.get_attr_as_int(DW_AT.declaration):
                 f.write(colorize_error_or_warning("error: DIE in name table is a declaration and shouldn't be in the name lookup"))
                 f.write('\n')
             die.dump_ancestry(f=f, dump_unit_info=True, show_all_attrs=True)
         else:
+            if resolved_entry.skeleton_cu:
+                f.write('Skeleton CU:\n')
+                resolved_entry.skeleton_cu.dump(verbose=False, f=f, max_depth=0)
+            if resolved_entry.cu:
+                f.write('CU:\n')
+                resolved_entry.cu.dump(verbose=False, f=f, max_depth=0)
             debug_info = self.abbrev.header.debug_names.dwarf_ctx.get_debug_info()
             tu_offset = self.get_tu_offset()
             if tu_offset is not None:
@@ -353,23 +390,24 @@ class Entry:
                     f.write('error: relative die offset %#8.8x is larger than the CU info range [%#8.8x-%#8.8x)\n' % (die_offset, cu.offset, next_cu_offset))
 
     def dump(self, options, f=sys.stdout):
+        f.write("%#8.8x: \"%s\" %s " % (self.offset,
+                                        self.get_name(),
+                                        get_color_tag(self.abbrev.get_tag())))
         if options.verbose:
-            f.write("%#8.8x: %-*s" % (self.offset, DW_TAG.max_width(), get_color_tag(self.abbrev.tag)))
-            for value in self.values:
-                f.write('\n' if options and options.verbose else ' ')
-                value.dump(options, f=f)
-            return
-
-        # f.write('%#8.8x: %s @ %#8.8x' % (self.offset, get_color_tag(self.abbrev.tag), self.get_die_offset()))
-        f.write("%#8.8x: %s" % (self.offset, get_color_tag(self.abbrev.tag)))
-        for value in self.values:
-            f.write(' ')
-            value.dump(options, f=f)
-        (dwarf_unit, skeleton_cu) = self.get_dwarf_units()
+            for (i, value) in enumerate(self.values):
+                if i > 0:
+                    f.write(', ')
+                f.write('%s=%u' % (get_color_attr(value.get_attr()),
+                                   value.value))
+            f.write(' (')
+        (cu, skeleton_cu) = self.get_dwarf_units()
+        if (cu):
+            f.write(' cu = %#8.8x' % (cu.offset))
         if skeleton_cu:
-            f.write(' dwarf_unit = %#8.8x skeleton_cu = %#8.8x die = %#8.8x' % (dwarf_unit.offset, skeleton_cu.offset, self.get_die_offset()))
-        else:
-            f.write(' dwarf_unit = %#8.8x die = %#8.8x' % (dwarf_unit.offset, self.get_die_offset()))
+            f.write(' skeleton_cu = %#8.8x' % (skeleton_cu.offset))
+        f.write(' die = %#8.8x' % (self.get_die_offset()))
+        if options.verbose:
+            f.write(')')
 
 
 class VerifyStats:
@@ -634,7 +672,8 @@ class Header:
             f.write('%u entries\n' % (len(entries)))
             for entry in entries:
                 verify_stats.entry_count += 1
-                (die, description) = entry.get_die_and_desciption(self)
+                resolved_entry = entry.get_die_and_desciption(self)
+                die = resolved_entry.die
                 if die:
                     #die.dump_ancestry(f=f)
                     if die.get_attr_as_int(DW_AT.declaration):
@@ -652,10 +691,15 @@ class Header:
                         die.dump(f=f, show_all_attrs=True)
                         verify_stats.name_mismatches += 1
                 else:
-                    if description == 'error: type unit DWO name mismatch':
+                    if 'type unit DWO name mismatch' in resolved_entry.error:
                         verify_stats.type_dwo_mismatch += 1
                     else:
-                        f.write('%s\n' % (description))
+                        if resolved_entry.error:
+                            f.write(colorize_error_or_warning(resolved_entry.error))
+                            f.write('\n')
+                        if resolved_entry.warning:
+                            f.write(colorize_error_or_warning(resolved_entry.warning))
+                            f.write('\n')
 
         else:
             verify_stats.empty_entries += 1
@@ -679,6 +723,7 @@ class debug_names:
         self.headers = []
         self.data.seek(0)
         self.unpack(self.data)
+        self.options = None
 
     def unpack(self, data):
         data_len = self.data.get_size()
@@ -688,39 +733,46 @@ class debug_names:
             self.data.seek(self.headers[-1].next_offset)
 
     def handle_options(self, options, f):
+        self.options = options
         if options.debug_names:
             dump = True
             if options.verify_dwarf:
                 dump = False
-                self.verify(options, f)
-            elif options.lookup_names:
+                self.verify(f)
+            if options.lookup_names:
                 dump = False
-                if options.verbose:
-                    self.dump(options, f=f)
                 for name in options.lookup_names:
-                    entry = self.lookup_name(name)
+                    self.lookup_name(name)
             if dump:
-                self.dump(options, f=f)
+                self.dump(f=f)
 
     def lookup_name(self, name):
         matches = 0
+        max_matches = self.options.max_matches
+        stop_iterating = False
         for header in self.headers:
             entries = header.lookup_name(name)
             if entries:
-                matches += 1
                 for entry in entries:
-                    entry.dump_resolved()
+                    matches += 1
+                    entry.dump_resolved(self.options)
+                    print()
+                    if max_matches and matches >= max_matches:
+                        stop_iterating = True
+                        break
+            if stop_iterating:
+                break
         if matches == 0:
             print('no matches found for "%s" in %u .debug_names tables' % (name, len(self.headers)))
 
-    def dump(self, options, f=sys.stdout):
+    def dump(self, f=sys.stdout):
         for header in self.headers:
-            header.dump(options=options, f=f)
+            header.dump(options=self.options, f=f)
 
-    def verify(self, options, f):
+    def verify(self, f):
         verify_stats = VerifyStats()
         for header in self.headers:
-            header.verify(options, f, verify_stats)
+            header.verify(self.options, f, verify_stats)
         verify_stats.dump(f)
 
     def __str__(self):
