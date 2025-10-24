@@ -6,6 +6,7 @@ import file_extract
 
 # Python imports
 import io
+import os
 import sys
 import optparse
 
@@ -17,6 +18,27 @@ import dwarf.typestats
 # After options are parsed, clients must set this to the value returned from
 # optparse.parse_args()
 options = None
+
+
+def supports_color_basic():
+    """
+    Returns True if the running system's terminal *might* support basic ANSI
+    color, and False otherwise. This is a less robust check.
+    """
+    # Check if stdout is a TTY
+    if not hasattr(sys.stdout, 'isatty') or not sys.stdout.isatty():
+        return False
+
+    # Basic check for common color-supporting terminals
+    term = os.environ.get('TERM', '')
+    if 'color' in term or 'ansi' in term:
+        return True
+
+    # Check for Windows ANSICON environment variable
+    if sys.platform == 'win32' and 'ANSICON' in os.environ:
+        return True
+
+    return False
 
 
 def append_dwarf_options(parser):
@@ -242,7 +264,7 @@ def append_dwarf_options(parser):
         '-C', '--color',
         action='store_true',
         dest='color',
-        default=False,
+        default=supports_color_basic(),
         help='Enable colorized output')
     parser.add_option(
         '--indent-width',
