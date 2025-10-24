@@ -261,6 +261,11 @@ def append_dwarf_options(parser):
         dest='lookup_names',
         help='Name to lookup in .debug_info or .debug_types or .debug_names.')
     group.add_option(
+        '--parent-context',
+        type='string',
+        dest='parent_context',
+        help='A string describing the parent context --name matches should match.')
+    group.add_option(
         '-C', '--color',
         action='store_true',
         dest='color',

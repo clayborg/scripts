@@ -155,6 +155,72 @@ class ResolvedEntry:
         self.error = error
         self.warning = warning
 
+    def matches(self, expected_context=None) -> bool:
+        if self.die is None or self.error is not None:
+            return False
+        if expected_context:
+            actual_context = self.die.get_decl_context_as_string()
+            if expected_context != actual_context:
+                self.error = f'''error: context mistmatch\nExpect: "{expected_context}"\nActual: "{actual_context}"'''
+                return False
+        return True
+
+    def dump(self, options, f=sys.stdout):
+        f.write('Entry @ ')
+        self.entry.dump(options, f=f)
+        f.write('\n')
+        if self.error:
+            f.write(colorize_error_or_warning(self.error))
+            f.write('\n')
+        if self.warning:
+            f.write(colorize_error_or_warning(self.warning))
+            f.write('\n')
+        die = self.die
+        if die:
+            if self.skeleton_cu:
+                f.write('Skeleton CU:\n')
+                self.skeleton_cu.dump(verbose=False, f=f, max_depth=0)
+            if die.get_attr_as_int(DW_AT.declaration):
+                f.write(colorize_error_or_warning("error: DIE in name table is a declaration and shouldn't be in the name lookup"))
+                f.write('\n')
+            die.dump_ancestry(f=f, dump_unit_info=True, show_all_attrs=True)
+        else:
+            if self.skeleton_cu:
+                f.write('Skeleton CU:\n')
+                self.skeleton_cu.dump(verbose=False, f=f, max_depth=0)
+            if self.cu:
+                f.write('CU:\n')
+                self.cu.dump(verbose=False, f=f, max_depth=0)
+            debug_info = self.entry.abbrev.header.debug_names.dwarf_ctx.get_debug_info()
+            tu_offset = self.entry.get_tu_offset()
+            if tu_offset is not None:
+                f.write('tu @ %#8.8x\n' % (tu_offset))
+                tu = debug_info.get_dwarf_unit_with_offset(tu_offset)
+                if tu is None:
+                    f.write('error: no TU found @ .debug_info[%#8.8x]\n' % (tu_offset))
+                else:
+                    tu.dump(verbose=False, f=f)
+            type_sig = self.entry.get_tu_type_signature()
+            if type_sig is not None:
+                #f.write('type_sig = %#16.16x\n' % (type_sig))
+                (foreign_tu, dwo_cu) = debug_info.get_type_unit_with_signature(type_sig, self.entry.get_cu_offset(False))
+                if foreign_tu is None:
+                    f.write('error: no TU found that matches the type signature %#16.16x\n' % (type_sig))
+            cu_offset = self.entry.get_cu_offset()
+            if cu_offset is not None:
+                f.write('cu @ %#8.8x\n' % (cu_offset))
+                cu = debug_info.get_dwarf_unit_with_offset(cu_offset)
+                if cu is None:
+                    f.write('error: no CU found @ .debug_info[%#8.8x]\n' % (cu_offset))
+                else:
+                    cu.dump(verbose=False, f=f)
+                die_offset = cu.offset + self.entry.rel_die_offset
+                f.write("die @ %#8.8x\n" % (die_offset))
+                next_cu_offset = cu.get_next_cu_offset()
+                if die_offset <= cu.offset or die_offset >= next_cu_offset:
+                    f.write('error: relative die offset %#8.8x is larger than the CU info range [%#8.8x-%#8.8x)\n' % (die_offset, cu.offset, next_cu_offset))
+
+
 
 class Entry:
     '''Represents a single accelerator table entry.'''
@@ -219,7 +285,7 @@ class Entry:
     def get_tu_type_signature(self):
         return self.abbrev.header.get_foreign_type_signature(self.tu_idx);
 
-    def get_die_and_desciption(self) -> ResolvedEntry:
+    def resolve(self) -> ResolvedEntry:
         '''
             Given the entry, find the DWARF DIE for this entry.
 
@@ -280,8 +346,8 @@ class Entry:
                             entry=self,
                             cu=cu,
                             skeleton_cu=skeleton_cu,
-                            die=None,
-                            error='error: type unit DWO name mismatch:\n%s\n%s' % (skeleton_dwo_name, foreign_tu_dwo_name))
+                            die=die,
+                            error='error: type unit DWO name mismatch\n%s\n%s' % (skeleton_dwo_name, foreign_tu_dwo_name))
             return ResolvedEntry(
                 entry=self,
                 cu=cu,
@@ -333,61 +399,61 @@ class Entry:
             return self.abbrev.header.get_string(self.name_idx)
         return None
 
-    def dump_resolved(self, options, f=sys.stdout):
-        f.write('Entry @ ')
-        self.dump(options, f=f)
-        f.write('\n')
-        resolved_entry = self.get_die_and_desciption()
-        if resolved_entry.error:
-            f.write(colorize_error_or_warning(resolved_entry.error))
-            f.write('\n')
-        if resolved_entry.warning:
-            f.write(colorize_error_or_warning(resolved_entry.warning))
-            f.write('\n')
-        die = resolved_entry.die
-        if die:
-            if resolved_entry.skeleton_cu:
-                f.write('Skeleton CU:\n')
-                resolved_entry.skeleton_cu.dump(verbose=False, f=f, max_depth=0)
-            if die.get_attr_as_int(DW_AT.declaration):
-                f.write(colorize_error_or_warning("error: DIE in name table is a declaration and shouldn't be in the name lookup"))
-                f.write('\n')
-            die.dump_ancestry(f=f, dump_unit_info=True, show_all_attrs=True)
-        else:
-            if resolved_entry.skeleton_cu:
-                f.write('Skeleton CU:\n')
-                resolved_entry.skeleton_cu.dump(verbose=False, f=f, max_depth=0)
-            if resolved_entry.cu:
-                f.write('CU:\n')
-                resolved_entry.cu.dump(verbose=False, f=f, max_depth=0)
-            debug_info = self.abbrev.header.debug_names.dwarf_ctx.get_debug_info()
-            tu_offset = self.get_tu_offset()
-            if tu_offset is not None:
-                f.write('tu @ %#8.8x\n' % (tu_offset))
-                tu = debug_info.get_dwarf_unit_with_offset(tu_offset)
-                if tu is None:
-                    f.write('error: no TU found @ .debug_info[%#8.8x]\n' % (tu_offset))
-                else:
-                    tu.dump(verbose=False, f=f)
-            type_sig = self.get_tu_type_signature()
-            if type_sig is not None:
-                #f.write('type_sig = %#16.16x\n' % (type_sig))
-                (foreign_tu, dwo_cu) = debug_info.get_type_unit_with_signature(type_sig, self.get_cu_offset(False))
-                if foreign_tu is None:
-                    f.write('error: no TU found that matches the type signature %#16.16x\n' % (type_sig))
-            cu_offset = self.get_cu_offset()
-            if cu_offset is not None:
-                f.write('cu @ %#8.8x\n' % (cu_offset))
-                cu = debug_info.get_dwarf_unit_with_offset(cu_offset)
-                if cu is None:
-                    f.write('error: no CU found @ .debug_info[%#8.8x]\n' % (cu_offset))
-                else:
-                    cu.dump(verbose=False, f=f)
-                die_offset = cu.offset + self.rel_die_offset
-                f.write("die @ %#8.8x\n" % (die_offset))
-                next_cu_offset = cu.get_next_cu_offset()
-                if die_offset <= cu.offset or die_offset >= next_cu_offset:
-                    f.write('error: relative die offset %#8.8x is larger than the CU info range [%#8.8x-%#8.8x)\n' % (die_offset, cu.offset, next_cu_offset))
+    # def dump_resolved(self, options, f=sys.stdout):
+    #     f.write('Entry @ ')
+    #     self.dump(options, f=f)
+    #     f.write('\n')
+    #     resolved_entry = self.resolve()
+    #     if resolved_entry.error:
+    #         f.write(colorize_error_or_warning(resolved_entry.error))
+    #         f.write('\n')
+    #     if resolved_entry.warning:
+    #         f.write(colorize_error_or_warning(resolved_entry.warning))
+    #         f.write('\n')
+    #     die = resolved_entry.die
+    #     if die:
+    #         if resolved_entry.skeleton_cu:
+    #             f.write('Skeleton CU:\n')
+    #             resolved_entry.skeleton_cu.dump(verbose=False, f=f, max_depth=0)
+    #         if die.get_attr_as_int(DW_AT.declaration):
+    #             f.write(colorize_error_or_warning("error: DIE in name table is a declaration and shouldn't be in the name lookup"))
+    #             f.write('\n')
+    #         die.dump_ancestry(f=f, dump_unit_info=True, show_all_attrs=True)
+    #     else:
+    #         if resolved_entry.skeleton_cu:
+    #             f.write('Skeleton CU:\n')
+    #             resolved_entry.skeleton_cu.dump(verbose=False, f=f, max_depth=0)
+    #         if resolved_entry.cu:
+    #             f.write('CU:\n')
+    #             resolved_entry.cu.dump(verbose=False, f=f, max_depth=0)
+    #         debug_info = self.abbrev.header.debug_names.dwarf_ctx.get_debug_info()
+    #         tu_offset = self.get_tu_offset()
+    #         if tu_offset is not None:
+    #             f.write('tu @ %#8.8x\n' % (tu_offset))
+    #             tu = debug_info.get_dwarf_unit_with_offset(tu_offset)
+    #             if tu is None:
+    #                 f.write('error: no TU found @ .debug_info[%#8.8x]\n' % (tu_offset))
+    #             else:
+    #                 tu.dump(verbose=False, f=f)
+    #         type_sig = self.get_tu_type_signature()
+    #         if type_sig is not None:
+    #             #f.write('type_sig = %#16.16x\n' % (type_sig))
+    #             (foreign_tu, dwo_cu) = debug_info.get_type_unit_with_signature(type_sig, self.get_cu_offset(False))
+    #             if foreign_tu is None:
+    #                 f.write('error: no TU found that matches the type signature %#16.16x\n' % (type_sig))
+    #         cu_offset = self.get_cu_offset()
+    #         if cu_offset is not None:
+    #             f.write('cu @ %#8.8x\n' % (cu_offset))
+    #             cu = debug_info.get_dwarf_unit_with_offset(cu_offset)
+    #             if cu is None:
+    #                 f.write('error: no CU found @ .debug_info[%#8.8x]\n' % (cu_offset))
+    #             else:
+    #                 cu.dump(verbose=False, f=f)
+    #             die_offset = cu.offset + self.rel_die_offset
+    #             f.write("die @ %#8.8x\n" % (die_offset))
+    #             next_cu_offset = cu.get_next_cu_offset()
+    #             if die_offset <= cu.offset or die_offset >= next_cu_offset:
+    #                 f.write('error: relative die offset %#8.8x is larger than the CU info range [%#8.8x-%#8.8x)\n' % (die_offset, cu.offset, next_cu_offset))
 
     def dump(self, options, f=sys.stdout):
         f.write("%#8.8x: \"%s\" %s " % (self.offset,
@@ -672,7 +738,7 @@ class Header:
             f.write('%u entries\n' % (len(entries)))
             for entry in entries:
                 verify_stats.entry_count += 1
-                resolved_entry = entry.get_die_and_desciption(self)
+                resolved_entry = entry.resolve()
                 die = resolved_entry.die
                 if die:
                     #die.dump_ancestry(f=f)
@@ -742,11 +808,11 @@ class debug_names:
             if options.lookup_names:
                 dump = False
                 for name in options.lookup_names:
-                    self.lookup_name(name)
+                    self.lookup_name(name, options.parent_context)
             if dump:
                 self.dump(f=f)
 
-    def lookup_name(self, name):
+    def lookup_name(self, name, parent_context = None):
         matches = 0
         max_matches = self.options.max_matches
         stop_iterating = False
@@ -754,8 +820,10 @@ class debug_names:
             entries = header.lookup_name(name)
             if entries:
                 for entry in entries:
-                    matches += 1
-                    entry.dump_resolved(self.options)
+                    resolved_entry = entry.resolve()
+                    if resolved_entry.matches(parent_context):
+                        matches += 1
+                    resolved_entry.dump(self.options)
                     print()
                     if max_matches and matches >= max_matches:
                         stop_iterating = True
