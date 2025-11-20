@@ -38,17 +38,84 @@ class debug_str:
 
 
 class debug_str_offsets:
+    class Header:
+        def __init__(self, data):
+            self.data = data
+            self.offset = data.tell()
+            (self.length, self.offset_size) = data.get_dwarf_inital_length()
+            past_length_offset = data.tell()
+            self.end_offset = self.length + past_length_offset
+            self.version = data.get_uint16()
+            data.get_uint16()  # Skip padding
+            self.str_offsets_base = data.tell()
+            self.str_offsets_data = None
+
+        def dump(self, f=sys.stdout):
+            f.write(dwarf.options.get_color_offset(self.offset))
+            f.write(f': Length = {dwarf.options.get_color_offset(self.length)} ({self.length})')
+            f.write(f', Format = DWARF{"32" if self.offset_size == 4 else "64"}')
+            f.write(f', Version = {self.version}\n')
+
+
+        def get_num_string_offsets(self):
+            return (self.end_offset - self.str_offsets_base) // self.offset_size
+
+        def get_next_header_offset(self):
+            return self.end_offset
+
+        def get_str_offsets_data(self, seek_offset = 0):
+            if self.str_offsets_data is None:
+                self.data.seek(self.str_offsets_base)
+                self.str_offsets_data = self.data.read_data(self.end_offset - self.str_offsets_base)
+                self.data.offset_size = self.offset_size
+            self.str_offsets_data.seek(seek_offset)
+            return self.str_offsets_data
+
+        def get_string_at_index(self, idx, debug_str):
+            data = self.get_str_offsets_data(idx * self.offset_size)
+            strp = data.get_offset(None)
+            if strp is None:
+                raise ValueError('unable to decode string offset')
+            return debug_str.get_string(strp)
+
+
     '''Represents the .debug_str_offsets section in DWARF.'''
     def __init__(self, data, debug_str):
+        self.name = ".debug_str_offsets"
         self.data = data
         self.debug_str = debug_str
         self.max_offset = self.data.get_size()
-        self.strings = {}
+        self.headers = []
+        self.str_offsets_base_to_header = {}
+        while data.tell() < self.max_offset:
+            header = debug_str_offsets.Header(data)
+            self.headers.append(header)
+            self.str_offsets_base_to_header[header.str_offsets_base] = header
+            data.seek(header.get_next_header_offset())
 
     def get_string_at_index(self, idx, cu):
         '''Get a string by index from a compile unit.'''
-        offset = cu.get_str_offsets_base() + idx * cu.dwarf_info.dwarf_size
-        self.data.push_offset_and_seek(offset)
-        strp = self.data.get_offset()
-        self.data.pop_offset_and_seek()
-        return self.debug_str.get_string(strp)
+        str_offsets_base = cu.get_str_offsets_base()
+        header = self.str_offsets_base_to_header.get(str_offsets_base)
+        if header is None:
+            raise ValueError('unable to find .debug_str_offsets header')
+        return header.get_string_at_index(idx, self.debug_str)
+
+    def dump(self, f=sys.stdout):
+        offset = 0
+        f.write('%s:\n' % (self.name))
+        for (i, header) in enumerate(self.headers):
+            if i > 0:
+                f.write('\n')
+            header.dump()
+            data = header.get_str_offsets_data(0)
+            for idx in range(header.get_num_string_offsets()):
+                offset = data.tell()
+                f.write(f'{dwarf.options.get_color_offset(offset+header.str_offsets_base)}: ')
+                strp = data.get_offset(None)
+                f.write(f'{dwarf.options.get_color_offset(strp)} ')
+                if strp is None:
+                    f.write('error: unable to extract string\n')
+                    break
+                else:
+                    f.write(f'"{self.debug_str.get_string(strp)}"\n')

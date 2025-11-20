@@ -105,6 +105,12 @@ def append_dwarf_options(parser):
         help='Dump the .debug_str section',
         default=False)
     group.add_option(
+        '--debug-str-offsets',
+        action='store_true',
+        dest='debug_str_offsets',
+        help='Dump the .debug_str_offsets section',
+        default=False)
+    group.add_option(
         '--debug-line-str',
         action='store_true',
         dest='debug_line_str',
@@ -325,6 +331,7 @@ def have_dwarf_options(options):
             or options.debug_line_str
             or options.debug_names
             or options.debug_str
+            or options.debug_str_offsets
             or options.debug_types
             or options.debug_cu_index
             or options.debug_tu_index
@@ -479,6 +486,7 @@ def handle_options(opts, objfile, f=sys.stdout):
             options.debug_names = True
             options.debug_ranges = True
             options.debug_str = True
+            options.debug_str_offsets = True
             options.debug_types = True
             options.debug_cu_index = True
             options.debug_tu_index = True
@@ -630,6 +638,8 @@ def handle_options(opts, objfile, f=sys.stdout):
                     tu_index.handle_options(options, f)
             if options.debug_str and dwarf_ctx.debug_str:
                 dwarf_ctx.debug_str.dump(f=f)
+            if options.debug_str_offsets and dwarf_ctx.debug_str_offsets:
+                dwarf_ctx.debug_str_offsets.dump(f=f)
             if options.debug_line_str and dwarf_ctx.debug_line_str:
                 dwarf_ctx.debug_line_str.dump(f=f)
             if options.apple_names:

@@ -612,6 +612,16 @@ class FileExtract:
         else:
             return values[0] << 64 | values[1]
 
+    def get_dwarf_inital_length(self):
+        length = self.get_uint32(0)
+        if length < 0xFFFFFFF0:
+            return (length, 4)
+        if length == 0xFFFFFFFF:
+            length = self.get_uint64(0)
+            return (length, 8)
+        # Unhandled DWARF length between [0xFFFFFFF0-0xFFFFFFFF)
+        return (None, None)
+
     def set_gnu_pcrel(self, pcrel):
         self.pcrel = pcrel
 
@@ -734,6 +744,8 @@ class FileExtract:
             return self.get_uint8(fail_value)
         if size == 2:
             return self.get_uint16(fail_value)
+        if size == 3:
+            return self.get_uint24(fail_value)
         if size == 4:
             return self.get_uint32(fail_value)
         if size == 8:
