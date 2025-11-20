@@ -297,7 +297,7 @@ class CompileUnit:
     def prepare_for_encoding(self, offset):
         dwarf32 = self.dwarf_info.isDWARF32()
         # We must emit the line tables first so we know the value of the
-        # DW_AT_stmt_list and add the attribue. We only need to emit a line
+        # DW_AT_stmt_list and add the attribute. We only need to emit a line
         # table if we have files in the prologue. If we don't have any
         # files, then we don't have a line table of anything that requires
         # the line table (DW_AT_decl_file or DW_AT_call_file).
@@ -509,7 +509,7 @@ class DIE:
 
     def addNameAttribute(self, name):
         '''Add a name attribute using DW_AT_name and DW_FORM_strp.'''
-        return self.addStringAttribute(DW_AT.name, name)
+        return self.addAttribute(DW_AT.name, DW_FORM.strp, name)
 
     def addDataAttribute(self, attr, value):
         '''Add an integer attribute and select the right DW_FORM_data encoding.'''
