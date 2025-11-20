@@ -52,7 +52,7 @@ class debug_str_offsets:
 
         def dump(self, f=sys.stdout):
             f.write(dwarf.options.get_color_offset(self.offset))
-            f.write(f': Length = {dwarf.options.get_color_offset(self.length)} ({self.length})')
+            f.write(f': Length = 0x{self.length:08x} ({self.length})')
             f.write(f', Format = DWARF{"32" if self.offset_size == 4 else "64"}')
             f.write(f', Version = {self.version}\n')
 
@@ -109,13 +109,18 @@ class debug_str_offsets:
                 f.write('\n')
             header.dump()
             data = header.get_str_offsets_data(0)
-            for idx in range(header.get_num_string_offsets()):
+            max_matches = dwarf.options.get_max_matches()
+            num_strings = max_matches if max_matches else header.get_num_string_offsets()
+
+            for idx in range(num_strings):
                 offset = data.tell()
                 f.write(f'{dwarf.options.get_color_offset(offset+header.str_offsets_base)}: ')
                 strp = data.get_offset(None)
-                f.write(f'{dwarf.options.get_color_offset(strp)} ')
+                f.write(f'0x{strp:08x} ')
                 if strp is None:
                     f.write('error: unable to extract string\n')
                     break
                 else:
                     f.write(f'"{self.debug_str.get_string(strp)}"\n')
+            if max_matches:
+                f.write('...\n')

@@ -355,6 +355,11 @@ def have_dwarf_options(options):
             or options.optimize_path is not None)
 
 
+def get_max_matches():
+    if options:
+        return options.max_matches
+    return None
+
 def get_colorizer():
     if options is None:
         return term_colors.TerminalColors(False)
