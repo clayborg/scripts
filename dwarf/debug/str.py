@@ -111,12 +111,15 @@ class debug_str_offsets:
             data = header.get_str_offsets_data(0)
             max_matches = dwarf.options.get_max_matches()
             num_strings = max_matches if max_matches else header.get_num_string_offsets()
-
+            if header.offset_size == 8:
+                offset_format = "%#16.16x "
+            else:
+                offset_format = "%#8.8x "
             for idx in range(num_strings):
                 offset = data.tell()
                 f.write(f'{dwarf.options.get_color_offset(offset+header.str_offsets_base)}: ')
                 strp = data.get_offset(None)
-                f.write(f'0x{strp:08x} ')
+                f.write(offset_format % (strp))
                 if strp is None:
                     f.write('error: unable to extract string\n')
                     break
