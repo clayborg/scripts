@@ -1311,7 +1311,7 @@ class SectionHeader(object):
                 f.write('sh_addralign = 0x%16.16x\n' % (self.sh_size))
                 f.write('sh_entsize   = 0x%16.16x\n' % (self.sh_entsize))
 
-    def get_contents(self):
+    def get_contents(self, offset=None, size=None):
         '''Get the section contents as a python string'''
         if self.sh_size == 0 or self.sh_type == SHT.NOBITS:
             return None
@@ -1326,12 +1326,26 @@ class SectionHeader(object):
                         self.sh_size - header.byte_size)
                 bytes = zlib.decompress(compressed_bytes)
                 data.pop_offset_and_seek()
+                if offset is not None:
+                    if size is not None:
+                        return bytes[offset:offset+size]
+                    else:
+                        return bytes[offset:]
                 return bytes
             else:
                 raise ValueError('unhandled SHF_COMPRESSED ch_type %#8.8x' % (
                                  header.ch_type))
         else:
-            bytes = data.read_size(self.sh_size)
+            read_size = self.sh_size
+            if offset is not None:
+                if offset >= read_size:
+                    return None
+                data.seek(offset, file_extract.SEEK_CUR)
+                read_size -= offset
+            if size is not None:
+                if read_size > size:
+                    read_size = size
+            bytes = data.read_size(read_size)
             data.pop_offset_and_seek()
             return bytes
         return None
@@ -3033,11 +3047,22 @@ class File(object):
                     sections = self.get_sections_by_name(section_name)
                     if sections:
                         for section in sections:
-                            contents = section.get_contents()
+                            contents = section.get_contents(options.section_offset, options.section_size)
                             if contents:
-                                f.write('Dumping "%s" section contents:\n' %
-                                        (section_name))
-                                file_extract.dump_memory(section.sh_addr,
+                                if options.section_offset:
+                                    if options.section_size:
+                                        f.write('Dumping %u bytes from section "%s" starting at offset %#8.8x:\n' % (options.section_size, section_name, options.section_offset))
+                                    else:
+                                        f.write('Dumping the section contents of "%s" starting at offset %#8.8x:\n' % (section_name, options.section_offset))
+                                else:
+                                    if options.section_size:
+                                        f.write('Dumping the first %u bytes from section "%s":\n' % (options.section_size, section_name))
+                                    else:
+                                        f.write('Dumping the section contents of "%s":\n' % (section_name))
+                                base_addr = section.sh_addr
+                                if options.section_offset is not None:
+                                    base_addr += options.section_offset
+                                file_extract.dump_memory(base_addr,
                                                          contents,
                                                          options.num_per_line,
                                                          f)
@@ -3573,6 +3598,20 @@ def main():
         dest='section_names',
         action='append',
         help='Specify one or more section names to dump')
+    parser.add_option(
+        '--offset',
+        type='int',
+        metavar='OFFSET',
+        dest='section_offset',
+        default=None,
+        help='Specify an offset within the section data to start dumping when using --section NAME')
+    parser.add_option(
+        '--size',
+        type='int',
+        metavar='SIZE',
+        dest='section_size',
+        default=None,
+        help='Specify the number of bytes to dump when using --section NAME')
     parser.add_option(
         '--gnu-debugdata',
         action='store_true',
