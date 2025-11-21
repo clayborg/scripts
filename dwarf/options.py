@@ -229,6 +229,12 @@ def append_dwarf_options(parser):
         dest='cu_offsets',
         help='Dump the specified DWARF unit by unit header offset.')
     group.add_option(
+        '--str-offsets',
+        type='int',
+        action='append',
+        dest='str_offsets',
+        help='Dump the specified .debug_str_offsets table by the header offset.')
+    group.add_option(
         '--type-sig',
         type='int',
         action='append',
@@ -340,6 +346,7 @@ def have_dwarf_options(options):
             or options.lookup_names
             or options.cu_names
             or options.die_offsets
+            or options.str_offsets
             or options.cu_offsets
             or options.type_sigs
             or options.stmt_offsets
@@ -611,6 +618,15 @@ def handle_options(opts, objfile, f=sys.stdout):
                         else:
                             f.write('error: no DIE for .debug_info offset '
                                     '0x%8.8x\n' % (die_offset))
+                if options.str_offsets:
+                    for str_offset in options.str_offsets:
+                        str_offsets_header = dwarf_ctx.debug_str_offsets.find_header_by_offset(str_offset)
+                        if str_offsets_header:
+                            str_offsets_header.dump()
+                            str_offsets_header.dump_strings()
+                        else:
+                            f.write('error: no .debug_str_offsets header was found for offset '
+                                    '0x%8.8x\n' % (str_offset))
                 if options.cu_offsets:
                     for cu_offset in options.cu_offsets:
                         cu = debug_info.get_dwarf_unit_with_offset(cu_offset)

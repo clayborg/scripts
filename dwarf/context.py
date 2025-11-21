@@ -65,7 +65,7 @@ class DWARF:
             self.debug_str_offsets = dwarf.debug.str.debug_str_offsets(
                     self.debug_str_offsets_data, self.debug_str)
         else:
-            self.debug_str_offsets = 0
+            self.debug_str_offsets = None
         self.debug_abbrev = None
         self.debug_aranges = None
         self.debug_info = None
