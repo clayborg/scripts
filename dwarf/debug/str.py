@@ -99,12 +99,12 @@ class debug_str_offsets:
             self.str_offsets_data.seek(seek_offset)
             return self.str_offsets_data
 
-        def get_string_at_index(self, idx, debug_str):
+        def get_string_at_index(self, idx):
             data = self.get_str_offsets_data(idx * self.offset_size)
             strp = data.get_uint_size(self.offset_size, None)
             if strp is None:
                 raise ValueError('unable to decode string offset')
-            return debug_str.get_string(strp)
+            return self.debug_str.get_string(strp)
 
 
     '''Represents the .debug_str_offsets section in DWARF.'''
@@ -123,16 +123,18 @@ class debug_str_offsets:
             self.str_offsets_base_to_header[header.str_offsets_base] = header
             data.seek(header.get_next_header_offset())
 
-    def find_header_by_offset(self, header_offset):
-        return self.offset_to_header.get(header_offset)
+    def find_header_by_offset(self, offset):
+        return self.offset_to_header.get(offset)
+
+    def find_header_by_str_offsets_base(self, offset):
+        return self.str_offsets_base_to_header.get(offset)
 
     def get_string_at_index(self, idx, cu):
         '''Get a string by index from a compile unit.'''
-        str_offsets_base = cu.get_str_offsets_base()
-        header = self.str_offsets_base_to_header.get(str_offsets_base)
+        header = cu.get_string_offsets_header()
         if header is None:
             raise ValueError('unable to find .debug_str_offsets header')
-        return header.get_string_at_index(idx, self.debug_str)
+        return header.get_string_at_index(idx)
 
     def dump(self, f=sys.stdout):
         offset = 0

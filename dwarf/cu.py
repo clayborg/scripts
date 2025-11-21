@@ -48,7 +48,7 @@ class CompileUnit:
         self.aranges = None
         self.die_ranges = None
         self.addr_base = None
-        self.str_offsets_base = None
+        self.str_offsets = None
         self.stmt_offset = None
         # If this is skeleton compile unit it will have a DWO unit
         self.dwo_unit = None
@@ -404,18 +404,32 @@ class CompileUnit:
                                                 self.get_base_address())
         return None
 
-    def get_str_offsets_base(self):
-        '''Fixup the .debug_str_offsets base for .dwo files in .dwp files.'''
-        if self.str_offsets_base is None:
-            header_size = 0
-            if self.dwarf_info.version >= 5:
-                # Account for the header size which is either:
-                # DWARF32: 4 byte length + 2 byte version + 2 byte padding
-                # DWARF64: 12 byte length + 2 byte version + 2 byte padding
-                header_size = (4+2+2) if self.dwarf_info.dwarf_size == 4 else (12+2+2)
-            str_offsets_base = self.get_die().get_attr_as_int(DW_AT.str_offsets_base, header_size)
-            self.str_offsets_base = self.relocate_offset(str_offsets_base, DW_SECT.STR_OFFSETS)
-        return self.str_offsets_base
+    def get_str_offsets(self):
+        '''
+        Find the .debug_str_offsets table for this compile unit.
+        '''
+        if self.str_offsets is None:
+            str_offsets_base = self.get_die().get_attr_as_int(DW_AT.str_offsets_base, None)
+            if str_offsets_base is not None:
+                # We have a DW_AT_str_offsets_base attribute. Find the
+                # .debug_str_offsets table using this value.
+                str_offsets_base = self.relocate_offset(str_offsets_base, DW_SECT.STR_OFFSETS)
+                self.str_offsets = self.get_dwarf().debug_str_offsets.find_header_by_str_offsets_base(str_offsets_base)
+            else:
+                # We have a .dwo file as a stand alone file or in a .dwp file.
+                # Find the .debug_str_offsets table using the header offset.
+                str_offsets_offset = self.relocate_offset(0, DW_SECT.STR_OFFSETS)
+                self.str_offsets = self.get_dwarf().debug_str_offsets.find_header_by_offset(str_offsets_offset)
+        return self.str_offsets
+
+    def get_string_at_index(self, idx):
+        '''
+        Get a string from the .debug_str_offsets table for this compile unit.
+        '''
+        str_offsets = self.get_str_offsets()
+        if str_offsets is None:
+            raise ValueError('unable to find .debug_str_offsets header for compile unit')
+        return str_offsets.get_string_at_index(idx)
 
     def get_addr_base(self):
         '''Fixup the .debug_addr base for .dwo files.'''

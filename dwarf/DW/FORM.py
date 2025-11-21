@@ -341,27 +341,27 @@ class DW_FORM(IntEnum):
             str_idx = data.get_uleb128(None)
             if dwarf is None and die is not None:
                 dwarf = die.cu.debug_info.dwarf
-            return (dwarf.get_string_at_index(str_idx, die.cu), str_idx)
+            return (die.cu.get_string_at_index(str_idx), str_idx)
         elif self == DW_FORM.strx1:
             str_idx = data.get_uint8()
             if dwarf is None and die is not None:
                 dwarf = die.cu.debug_info.dwarf
-            return (dwarf.get_string_at_index(str_idx, die.cu), str_idx)
+            return (die.cu.get_string_at_index(str_idx), str_idx)
         elif self == DW_FORM.strx2:
             str_idx = data.get_uint16()
             if dwarf is None and die is not None:
                 dwarf = die.cu.debug_info.dwarf
-            return (dwarf.get_string_at_index(str_idx, die.cu), str_idx)
+            return (die.cu.get_string_at_index(str_idx), str_idx)
         elif self == DW_FORM.strx3:
             str_idx = data.get_uint24()
             if dwarf is None and die is not None:
                 dwarf = die.cu.debug_info.dwarf
-            return (dwarf.get_string_at_index(str_idx, die.cu), str_idx)
+            return (die.cu.get_string_at_index(str_idx), str_idx)
         elif self == DW_FORM.strx4:
             str_idx = data.get_uint32()
             if dwarf is None and die is not None:
                 dwarf = die.cu.debug_info.dwarf
-            return (dwarf.get_string_at_index(str_idx, die.cu), str_idx)
+            return (die.cu.get_string_at_index(str_idx), str_idx)
         elif self == DW_FORM.addr:
             return (data.get_address(), None)
         elif self in [DW_FORM.data1, DW_FORM.flag]:
