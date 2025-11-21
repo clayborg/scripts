@@ -74,7 +74,7 @@ class debug_str_offsets:
             for idx in range(num_strings):
                 offset = data.tell()
                 f.write(f'{dwarf.options.get_color_offset(offset+self.str_offsets_base)}: ')
-                strp = data.get_offset(None)
+                strp = data.get_uint_size(self.offset_size, None)
                 f.write(index_format % idx)
                 f.write(offset_format % (strp))
                 if strp is None:
@@ -96,13 +96,12 @@ class debug_str_offsets:
             if self.str_offsets_data is None:
                 self.data.seek(self.str_offsets_base)
                 self.str_offsets_data = self.data.read_data(self.end_offset - self.str_offsets_base)
-                self.data.offset_size = self.offset_size
             self.str_offsets_data.seek(seek_offset)
             return self.str_offsets_data
 
         def get_string_at_index(self, idx, debug_str):
             data = self.get_str_offsets_data(idx * self.offset_size)
-            strp = data.get_offset(None)
+            strp = data.get_uint_size(self.offset_size, None)
             if strp is None:
                 raise ValueError('unable to decode string offset')
             return debug_str.get_string(strp)
