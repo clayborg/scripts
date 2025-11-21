@@ -110,20 +110,35 @@ class debug_str_offsets:
             header.dump()
             data = header.get_str_offsets_data(0)
             max_matches = dwarf.options.get_max_matches()
-            num_strings = max_matches if max_matches else header.get_num_string_offsets()
+            num_strings = header.get_num_string_offsets()
+            limited_output = False
+            if max_matches is not None and max_matches < num_strings:
+                num_strings = max_matches
+                limited_output = True
             if header.offset_size == 8:
                 offset_format = "%#16.16x "
             else:
                 offset_format = "%#8.8x "
+            index_width = calculate_index_width(num_strings)
+            index_format = f'[%{index_width}u] '
             for idx in range(num_strings):
                 offset = data.tell()
                 f.write(f'{dwarf.options.get_color_offset(offset+header.str_offsets_base)}: ')
                 strp = data.get_offset(None)
+                f.write(index_format % idx)
                 f.write(offset_format % (strp))
                 if strp is None:
                     f.write('error: unable to extract string\n')
                     break
                 else:
                     f.write(f'"{self.debug_str.get_string(strp)}"\n')
-            if max_matches:
+            if limited_output and max_matches:
                 f.write('...\n')
+
+
+def calculate_index_width(count):
+    width = 1
+    while count >= 10:
+        count = count // 10
+        width += 1
+    return width
