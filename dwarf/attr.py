@@ -92,7 +92,9 @@ class Value:
         reloc_sect = None
         if self.get_attr() == DW_AT.stmt_list:
             reloc_sect = DW_SECT.LINE
-        (self.value, self.value_raw) = self.get_form().extract_value(data, die, dw_sect=reloc_sect)
+        (self.value, self.value_raw) = self.get_form().extract_value(
+            data, die, dw_sect=reloc_sect, attr_spec=self.attr_spec
+        )
         return self.value is not None
 
     def get_resolved_address(self):

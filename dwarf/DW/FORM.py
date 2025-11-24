@@ -324,7 +324,7 @@ class DW_FORM(IntEnum):
             data.seek(data.tell()+size)
         return True
 
-    def extract_value(self, data, die=None, dwarf=None, dw_sect=None):
+    def extract_value(self, data, die=None, dwarf=None, dw_sect=None, attr_spec=None):
         block_len = -1
         addr_idx = None
         if self == DW_FORM.strp:
@@ -444,7 +444,9 @@ class DW_FORM(IntEnum):
             indirect_form = DW_FORM(data.get_uleb128())
             return indirect_form.extract_value(data, die=die)
         elif self == DW_FORM.implicit_const:
-            return -42  # TODO: need AttrSpec for this
+            if attr_spec is None:
+                raise ValueError("DW_FORM.implicit_const requires attr_spec")
+            return (attr_spec.implicit_const, None)
         # Extract a block of data
         if block_len >= 0:
             return (data.read_size(block_len), None)
