@@ -249,11 +249,11 @@ class CompileUnit:
             die.dump(verbose=verbose, max_depth=max_depth, f=f,
                      offset_adjust=offset_adjust, indent_width=indent_width)
 
-        if dwarf.options.dump_dwo and self.is_skeleton():
+        if dwarf.options.options.dump_dwo and self.is_skeleton():
             dwo_unit = self.get_dwo_unit()
             if dwo_unit:
-                dwo_unit.dump(verbose=dwarf.options.verbose,
-                              max_depth=dwarf.options.recurse_depth,
+                dwo_unit.dump(verbose=dwarf.options.options.verbose,
+                              max_depth=dwarf.options.options.recurse_depth,
                               f=f)
             elif self.dwo_error:
                 f.write(self.dwo_error)
