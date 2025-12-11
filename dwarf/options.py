@@ -312,6 +312,13 @@ def append_dwarf_options(parser):
         help=('Set the max number of matches to display for --name. '
               'Default is no limit.'))
     parser.add_option(
+        '--depth',
+        type='int',
+        metavar='<integer>',
+        dest='recurse_depth',
+        default=None,
+        help=('Set the recurse depth when dumping DIEs. Default is no limit.'))
+    parser.add_option(
         '--optimize',
         type='string',
         dest='optimize_path',

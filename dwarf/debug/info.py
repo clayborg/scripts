@@ -183,7 +183,9 @@ class debug_info:
             for dwo_id in options.dwo_ids:
                 cu = self.get_compile_unit_with_dwo_id(dwo_id)
                 if cu:
-                    cu.dump(verbose=options.verbose, max_depth=sys.maxsize, f=f,
+                    cu.dump(verbose=options.verbose,
+                            max_depth=options.recurse_depth,
+                            f=f,
                             indent_width=indent)
                     if options.dump_dwo and cu.is_skeleton():
                         dwo_unit = cu.get_dwo_unit()
@@ -197,13 +199,15 @@ class debug_info:
         else:
             cus = self.get_dwarf_units()
             for cu in cus:
-                cu.dump(verbose=options.verbose, max_depth=sys.maxsize, f=f,
+                cu.dump(verbose=options.verbose,
+                        max_depth=options.recurse_depth,
+                        f=f,
                         indent_width=indent)
                 if options.dump_dwo and cu.is_skeleton():
                     dwo_unit = cu.get_dwo_unit()
                     if dwo_unit:
                         dwo_unit.dump(verbose=options.verbose,
-                                      max_depth=sys.maxsize, f=f,
+                                      max_depth=options.recurse_depth, f=f,
                                       indent_width=indent)
                     elif cu.dwo_error:
                         f.write(cu.dwo_error)
@@ -215,7 +219,7 @@ class debug_info:
         if tus:
             f.write('.debug_types\n')
             for tu in tus:
-                tu.dump(verbose=verbose, max_depth=sys.maxsize, f=f,
+                tu.dump(verbose=verbose, max_depth=options.recurse_depth, f=f,
                         offset_adjust=offset_adjust)
 
     def __str__(self):

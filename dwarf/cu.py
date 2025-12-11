@@ -235,6 +235,8 @@ class CompileUnit:
 
     def dump(self, verbose, max_depth=sys.maxsize, f=sys.stdout,
              offset_adjust=0, indent_width=4):
+        if max_depth is None:
+            max_depth = sys.maxsize
         self.dump_header(f=f, offset_adjust=offset_adjust)
         die = None
         if max_depth == 0:
