@@ -95,6 +95,15 @@ class debug_info:
                 return cu
         return None
 
+    def get_dwarf_unit_with_str_offsets_base(self, str_offsets_base):
+        '''Get the first DWARF unit whose DW_AT_str_offsets_base attribute matches.'''
+        cus = self.get_dwarf_units()
+        for cu in cus:
+            cu_str_offsets_base = cu.get_str_offsets_base()
+            if cu_str_offsets_base == str_offsets_base:
+                return cu
+        return None
+
     def lookup_address_in_cu(self, cu, address):
         die = cu.lookup_die_by_address(address)
         if die:

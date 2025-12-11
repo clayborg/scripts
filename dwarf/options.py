@@ -235,6 +235,12 @@ def append_dwarf_options(parser):
         dest='str_offsets',
         help='Dump the specified .debug_str_offsets table by the header offset.')
     group.add_option(
+        '--cu-with-str-offsets-base',
+        type='int',
+        action='append',
+        dest='cu_with_str_offsets_base',
+        help='Dump the DWARF unit that has the specified DW_AT_str_offsets_base value.')
+    group.add_option(
         '--type-sig',
         type='int',
         action='append',
@@ -348,6 +354,7 @@ def have_dwarf_options(options):
             or options.die_offsets
             or options.str_offsets
             or options.cu_offsets
+            or options.cu_with_str_offsets_base
             or options.type_sigs
             or options.stmt_offsets
             or options.apple_names
@@ -635,6 +642,14 @@ def handle_options(opts, objfile, f=sys.stdout):
                             cu.dump(options.verbose, max_depth=depth)
                         else:
                             f.write('error: no CU @ .debug_info[0x%8.8x]\n' % (cu_offset))
+                if options.cu_with_str_offsets_base:
+                    for str_offsets_base in options.cu_with_str_offsets_base:
+                        cu = debug_info.get_dwarf_unit_with_str_offsets_base(str_offsets_base)
+                        if cu:
+                            depth = sys.maxsize if options.children else 0
+                            cu.dump(options.verbose, max_depth=depth)
+                        else:
+                            f.write('error: no CU with DW_AT_str_offsets_base value of 0x%8.8x\n' % (str_offsets_base))
                 if options.type_sigs and (options.debug_info or not options.debug_tu_index):
                     for type_sig in options.type_sigs:
                         (tu, dwo_cu) = debug_info.get_type_unit_with_signature(type_sig)
