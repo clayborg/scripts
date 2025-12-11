@@ -185,6 +185,15 @@ class debug_info:
                 if cu:
                     cu.dump(verbose=options.verbose, max_depth=sys.maxsize, f=f,
                             indent_width=indent)
+                    if options.dump_dwo and cu.is_skeleton():
+                        dwo_unit = cu.get_dwo_unit()
+                        if dwo_unit:
+                            dwo_unit.dump(verbose=options.verbose,
+                                        max_depth=sys.maxsize, f=f,
+                                        indent_width=indent)
+                        elif cu.dwo_error:
+                            f.write(cu.dwo_error)
+                            f.write('\n')
         else:
             cus = self.get_dwarf_units()
             for cu in cus:
