@@ -320,46 +320,6 @@ def sizeof_fmt(num):
     return "%.1f%s" % (num, 'Y')
 
 
-def dump_memory(base_addr, data, num_per_line, outfile):
-
-    data_len = len(data)
-    hex_string = binascii.hexlify(data)
-    addr = base_addr
-    ascii_str = ''
-    i = 0
-    while i < data_len:
-        outfile.write(int_to_hex32(addr+i))
-        outfile.write(': ')
-        bytes_left = data_len - i
-        if bytes_left >= num_per_line:
-            curr_data_len = num_per_line
-        else:
-            curr_data_len = bytes_left
-        hex_start_idx = i * 2
-        hex_end_idx = hex_start_idx + curr_data_len * 2
-        curr_hex_str = hex_string[hex_start_idx:hex_end_idx]
-        # 'curr_hex_str' now contains the hex byte string for the
-        # current line with no spaces between bytes
-        t = iter(curr_hex_str)
-        # Print hex bytes separated by space
-        outfile.write(' '.join(a+b for a, b in zip(t, t)))
-        # Print two spaces
-        outfile.write('  ')
-        # Calculate ASCII string for bytes into 'ascii_str'
-        ascii_str = ''
-        for j in range(i, i+curr_data_len):
-            ch = data[j]
-            if ch in string.printable and ch not in string.whitespace:
-                ascii_str += '%c' % (ch)
-            else:
-                ascii_str += '.'
-        # Print ASCII representation and newline
-        outfile.write(ascii_str)
-        outfile.write('\n')
-        i = i + curr_data_len
-    outfile.write('\n')
-
-
 def swap_unpack_char():
     """Returns the unpack prefix that will for non-native endian-ness."""
     if struct.pack('H', 1).startswith("\x00"):
@@ -2503,7 +2463,7 @@ class Mach:
                         print('section %s:\n' % (sectname))
                         section.dump_header()
                         print('%s\n' % (section))
-                        dump_memory(0, sect_bytes, 16, sys.stdout)
+                        file_extract.dump_memory(0, sect_bytes, 16, sys.stdout)
                 else:
                     print('error: no section named "%s" was found' % (
                           sectname))
