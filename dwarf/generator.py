@@ -458,7 +458,7 @@ class Attribute:
             pass
         elif form == DW_FORM.ref_sig8:
             strm.put_uint64(value)
-        elif form == DW_FORM.ref_addr:
+        elif form in [DW_FORM.ref_addr, DW_FORM.GNU_ref_alt, DW_FORM.GNU_strp_alt]:
             int_size = self.attr_spec.get_form().get_fixed_size(
                 die.cu.dwarf_info)
             if isinstance(value, DIE):
@@ -526,6 +526,10 @@ class DIE:
     def addReferenceAttribute(self, attr, die):
         '''Add an attribute that references another DIE.'''
         self.addAttribute(attr, DW_FORM.ref4, die)
+
+    def addGNUAltReferenceAttribute(self, attr, die):
+        '''Add an attribute that references another DIE.'''
+        self.addAttribute(attr, DW_FORM.GNU_ref_alt, die)
 
     def addAbsoluteReferenceAttribute(self, attr, die):
         '''Add an attribute that references another DIE.'''

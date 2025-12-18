@@ -229,7 +229,8 @@ class DW_FORM(IntEnum):
                         DW_FORM.ref1,
                         DW_FORM.ref2,
                         DW_FORM.ref_udata,
-                        DW_FORM.ref_addr]
+                        DW_FORM.ref_addr,
+                        DW_FORM.GNU_ref_alt]
 
     def get_fixed_size(self, dwarf_info=None):
         '''Get the fixed byte size of this form.
@@ -247,6 +248,9 @@ class DW_FORM(IntEnum):
                 if sizes[0] == sizes[1]:
                     return sizes[0]
         if self.value == DW_FORM.addr:
+            if dwarf_info:
+                return dwarf_info.addr_size
+        if self.value in [DW_FORM.GNU_ref_alt, DW_FORM.GNU_strp_alt]:
             if dwarf_info:
                 return dwarf_info.addr_size
         return -1
