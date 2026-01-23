@@ -252,7 +252,7 @@ class DW_FORM(IntEnum):
                 return dwarf_info.addr_size
         if self.value in [DW_FORM.GNU_ref_alt, DW_FORM.GNU_strp_alt]:
             if dwarf_info:
-                return dwarf_info.addr_size
+                return dwarf_info.dwarf_size
         return -1
 
     def get_byte_size(self, die, value):
