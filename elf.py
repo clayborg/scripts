@@ -655,6 +655,12 @@ SHF_MASK = 0x000fffff
 # ELF Compression Types (CompressedHeader.ch_type)
 ELFCOMPRESS_ZLIB = 1
 
+def offsetToAlign(align, value):
+    delta = value % align
+    if delta == 0:
+        return 0
+    return align - delta
+
 
 def sizeof_fmt(num):
     for unit in ['B', 'K', 'M', 'G', 'T', 'P', 'E', 'Z']:
@@ -1467,6 +1473,12 @@ class ProgramHeader(object):
                                         self.elf.data.get_byte_order(),
                                         self.elf.data.addr_size)
 
+    def contains_vaddr_in_file(self, vaddr):
+        return self.p_vaddr <= vaddr and vaddr < (self.p_vaddr + self.p_filesz)
+
+    def contains_vaddr_in_memory(self, vaddr):
+        return self.p_vaddr <= vaddr and vaddr < (self.p_vaddr + self.p_memsz)
+
     def dump(self, flat, f=sys.stdout):
         if flat:
             if self.index == 0:
@@ -1824,6 +1836,18 @@ NT_GNU_ABI_OS_SOLARIS = 2
 NT_GNU_BUILD_ID_TAG = 3
 
 
+class NT_FILE(object):
+    '''Represents an entry in the NT_FILE array in a core file.'''
+    def __init__(self, start, end, file_ofs, path):
+        self.start = start
+        self.end = end
+        self.file_ofs = file_ofs
+        self.path = path
+
+    def dump(self, f=sys.stdout):
+        f.write('[0x%16.16x - 0x%16.16x) file_ofs=0x%16.16x %s\n' %
+                (self.start, self.end, self.file_ofs, self.path))
+
 class Note(object):
     '''Respresents an ELF note'''
     def __init__(self, name, type, data):
@@ -1878,6 +1902,22 @@ class Note(object):
                             io.BytesIO(data.file.getvalue()),
                             data.get_byte_order(),
                             data.get_addr_size()))
+
+    def get_nt_files(self):
+        self.data.seek(0)
+        nt_files = None
+        if (self.name == 'CORE' or self.name == 'LINUX') and self.type == NT.FILE:
+            nt_files = []
+            count = self.data.get_address()
+            page_size = self.data.get_address()
+            for i in range(count):
+                start = self.data.get_address()
+                end = self.data.get_address()
+                file_ofs = self.data.get_address()
+                nt_files.append(NT_FILE(start, end, file_ofs, None))
+            for i in range(count):
+                nt_files[i].path = self.data.get_c_string()
+        return nt_files
 
     def dump(self, options, f=sys.stdout):
         self.data.seek(0)
@@ -2354,6 +2394,14 @@ class File(object):
                 return note
         return None
 
+    def get_nt_files(self):
+        note = self.get_note('CORE', NT.FILE)
+        if note is None:
+            note = self.get_note('LINUX', NT.FILE)
+            if note is None:
+                return None
+        return note.get_nt_files()
+
     def get_symbol_size(self):
         addr_size = self.get_addr_size()
         if addr_size == 4:
@@ -2392,6 +2440,12 @@ class File(object):
                 return data
         return None
 
+    def add_program_header(self, ph):
+        if self.program_headers is None:
+            self.program_headers = []
+        ph.data = ph.get_contents()
+        self.program_headers.append(ph)
+
     def add_notes_program_header(self, note):
         if self.program_headers is None:
             self.program_headers = []
@@ -2415,10 +2469,10 @@ class File(object):
         offset += self.header.e_phentsize * self.header.e_phnum
         for ph in self.program_headers:
             if ph.data is not None:
-                ph.p_offset = offset
+                ph.p_offset = offset + offsetToAlign(ph.p_align, offset)
                 ph.p_filesz = len(ph.data)
                 offset += ph.p_filesz
-        with open(path, 'w') as out_file:
+        with open(path, 'wb') as out_file:
             data = file_extract.FileEncode(out_file,
                                            self.get_byte_order(),
                                            self.get_addr_size())
@@ -2431,11 +2485,7 @@ class File(object):
             for ph in self.program_headers:
                 ph.encode(data)
             for ph in self.program_headers:
-                curr_offset = data.tell()
-                if ph.p_offset != curr_offset:
-                    print('error: program header %i p_offset is not correct is'
-                          ' %#x, should be %#x' % (curr_offset, ph.p_offset))
-                    return
+                data.file.seek(ph.p_offset, 0)
                 data.file.write(ph.data)
 
     def get_file_type(self):
@@ -2700,7 +2750,7 @@ class File(object):
                 return section
         return None
 
-    def get_program_headers(self):
+    def get_program_headers(self) -> list[ProgramHeader]:
         if self.program_headers is None:
             if self.is_valid():
                 self.data.seek(self.header.e_phoff)
@@ -2716,6 +2766,12 @@ class File(object):
             if ph.p_type == p_type:
                 matching_phs.append(ph)
         return matching_phs
+
+    def get_program_headers_by_vaddr_in_file(self, vaddr):
+        for ph in self.get_program_headers():
+            if ph.contains_vaddr_in_file(vaddr):
+                return ph
+        return None
 
     def get_program_header_by_type(self, p_type, start_idx=0):
         program_headers = self.get_program_headers()
