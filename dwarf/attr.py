@@ -211,6 +211,10 @@ class Value:
                     return '<invalid flag value %u>' % self.value
             elif form == DW_FORM.sec_offset:
                 fixed_size = self.get_fixed_size(die)
+                if attr == DW_AT.LLVM_stmt_sequence:
+                    line_table = die.cu.get_line_table()
+                    if line_table.lookup_sequence_by_stmt_sequence_offset(self.value) is None:
+                        return get_sized_hex(fixed_size, self.value) + ' (error: invalid sequence offset)'
                 if verbose and self.value_raw is not None:
                     return get_sized_hex(fixed_size, self.value) + ' (without relocation = ' + get_sized_hex(fixed_size, self.value_raw) + ')'
                 else:

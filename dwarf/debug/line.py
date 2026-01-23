@@ -77,6 +77,7 @@ class debug_line:
         self.prologue = None
         self.rows = None
         self.sequence_ranges = None
+        self.sequence_offset_to_range = None
         self.row_arange = AddressRange(sys.maxsize, 0)
 
     def __repr__(self):
@@ -98,6 +99,24 @@ class debug_line:
                     sequence_start_idx = i
             self.sequence_ranges = sorted(unsorted_sequence_ranges)
         return self.sequence_ranges
+
+    def lookup_sequence_by_stmt_sequence_offset(self, stmt_sequence):
+        '''
+        Find a line table sequence by the .debug_line offset that specifies the
+        start offset of the sequence. This is used by DW_AT_LLVM_stmt_sequence
+        to identify a specific line table sequence within a line table.
+        '''
+        if self.sequence_offset_to_range is None:
+            self.sequence_offset_to_range = {}
+            rows = self.get_rows()
+            sequence_ranges = self.get_sequence_ranges()
+            for sequence_range in sequence_ranges:
+                self.sequence_offset_to_range[rows[sequence_range.start_idx].offset] = sequence_range
+
+        return self.sequence_offset_to_range.get(stmt_sequence)
+
+    def lookup_sequence_by_offset(self, stmt_sequence):
+        sequence_ranges = self.get_sequence_ranges()
 
     def lookup_sequence_range(self, address):
         sequence_ranges = self.get_sequence_ranges()
@@ -187,12 +206,10 @@ class debug_line:
             if offset > 0:
                 end_offset = prologue.get_rows_end_offset()
                 data.seek(offset)
-                row = Row(prologue)
+                row = Row(offset, prologue)
                 data.set_addr_size(self.addr_size)
                 while data.tell() < end_offset:
                     opcode = data.get_uint8()
-                    if debug:
-                        sys.stdout.write('%s ' % (DW_LNS(opcode)))
                     if opcode == 0:
                         # Extended opcodes always start with zero followed
                         # by uleb128 length to they can be skipped
@@ -203,13 +220,14 @@ class debug_line:
                         if dw_lne == DW_LNE.end_sequence:
                             row.end_sequence = True
                             self.rows.append(copy.copy(row))
+                            row.offset = data.tell()
                             # Keep up with the max range for the rows
                             if row.addr is not None and self.row_arange.hi < row.addr:
                                 self.row_arange.hi = row.addr
                             if debug:
                                 print('')
                                 row.dump(prologue)
-                            row = Row(prologue)
+                            row = Row(data.tell(), prologue)
                         elif dw_lne == DW_LNE.set_address:
                             row.addr = data.get_address()
                             if debug:
@@ -231,8 +249,11 @@ class debug_line:
                             # Skip unknown extended opcode
                             data.seek(data.tell() + length)
                     elif opcode < prologue.opcode_base:
+                        if debug:
+                            sys.stdout.write('%s ' % (DW_LNS(opcode)))
                         if opcode == DW_LNS.copy:
                             self.rows.append(copy.copy(row))
+                            row.offset = data.tell()
                             if row.addr < self.row_arange.lo:
                                 self.row_arange.lo = row.addr
                             if debug:
@@ -298,6 +319,7 @@ class debug_line:
                         row.line += line_offset
                         row.addr += addr_offset
                         self.rows.append(copy.copy(row))
+                        row.offset = data.tell()
                         if row.addr < self.row_arange.lo:
                             self.row_arange.lo = row.addr
                         if debug:
@@ -317,11 +339,12 @@ class debug_line:
         prologue.dump(verbose=verbose, f=f)
         rows = self.get_rows()
         if rows:
-            f.write('Address            Line   File\n')
-            f.write('------------------ ------ ----------------------------\n')
+            f.write('Offset      Address            Line   File\n')
+            f.write('----------  ------------------ ------ ----------------------------\n')
             prev_file = -1
             prev_row = None
             for row in rows:
+                f.write('%#8.8x: ' % (row.offset))
                 if verbose:
                     row.dump(prologue, f=f)
                     f.write('\n')
@@ -354,7 +377,8 @@ class debug_line:
 
 
 class Row:
-    def __init__(self, prologue):
+    def __init__(self, offset, prologue):
+        self.offset = offset
         self.addr = None
         self.file = 1
         self.line = 1
@@ -447,8 +471,9 @@ class Row:
                                                      self.line))
 
     def dump(self, prologue, f=sys.stdout):
-        f.write('0x%16.16x %5u %5u %5u' % (self.addr, self.file, self.line,
-                                           self.column))
+        f.write('0x%8.8x: 0x%16.16x %5u %5u %5u' % (self.offset, self.addr,
+                                                    self.file, self.line,
+                                                    self.column))
         if self.is_stmt:
             f.write(' is_stmt')
         if self.basic_block:
