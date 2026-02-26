@@ -418,6 +418,7 @@ SHN_HIPROC = 0xff1f
 SHN_ABS = 0xfff1
 SHN_COMMON = 0xfff2
 SHN_HIRESERVE = 0xffff
+SHN_XINDEX = 0xffff
 
 # The size (in bytes) of symbol table entries.
 SYMENTRY_SIZE32 = 16  # 32-bit symbol entry size
@@ -1005,6 +1006,22 @@ class Header(object):
         e_shentsize = data.get_uint16()
         e_shnum = data.get_uint16()
         e_shstrndx = data.get_uint16()
+
+        if (e_phnum == 0xFFFF or
+            e_shnum == SHN_UNDEF or
+            e_shstrndx == SHN_XINDEX):
+            # We need to read the section header at index zero to get info for
+            # fields that don't have enough room
+            elf.data.push_offset_and_seek(e_shoff)
+            section_zero = SectionHeader(elf, 0)
+            elf.data.pop_offset_and_seek()
+            if e_phnum == 0xFFFF:
+                e_phnum = section_zero.sh_info
+            if e_shnum == SHN_UNDEF:
+                e_shnum = section_zero.sh_size
+            if e_shstrndx == SHN_XINDEX:
+                e_shstrndx = section_zero.sh_link
+
         return cls(elf=elf,
                    e_ident=e_ident,
                    e_type=e_type,
