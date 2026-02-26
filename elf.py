@@ -1113,10 +1113,19 @@ class Header(object):
         f.write('e_flags     = 0x%8.8x\n' % (self.e_flags))
         f.write('e_ehsize    = 0x%4.4x\n' % (self.e_ehsize))
         f.write('e_phentsize = 0x%4.4x\n' % (self.e_phentsize))
-        f.write('e_phnum     = 0x%4.4x\n' % (self.e_phnum))
+        if self.e_phnum >= 0xFFFF:
+            f.write('e_phnum     = 0xFFFF (0x%4.4x)\n' % (self.e_phnum))
+        else:
+            f.write('e_phnum     = 0x%4.4x\n' % (self.e_phnum))
         f.write('e_shentsize = 0x%4.4x\n' % (self.e_shentsize))
-        f.write('e_shnum     = 0x%4.4x\n' % (self.e_shnum))
-        f.write('e_shstrndx  = 0x%4.4x\n' % (self.e_shstrndx))
+        if self.e_shnum >= 0xFFFF:
+            f.write('e_shnum     = SHN_UNDEF (0x%4.4x)\n' % (self.e_shnum))
+        else:
+            f.write('e_shnum     = 0x%4.4x\n' % (self.e_shnum))
+        if self.e_shstrndx >= 0xFFFF:
+            f.write('e_shstrndx  = SHN_XINDEX (0x%4.4x)\n' % (self.e_shstrndx))
+        else:
+            f.write('e_shstrndx  = 0x%4.4x\n' % (self.e_shstrndx))
 
     def clear(self):
         self.e_ident = None
