@@ -276,7 +276,7 @@ class CompileUnit:
         self.get_aranges().append_range(low_pc, high_pc)
 
     def add_line_entry_with_file_index(self, file_idx, line, addr, end_sequence=False):
-        row = dwarf.debug.line.Row(self.prologue)
+        row = dwarf.debug.line.Row(0, self.prologue)
         row.addr = addr
         row.file = file_idx
         row.line = line
@@ -284,7 +284,7 @@ class CompileUnit:
         self.line_rows.append(row)
 
     def add_line_entry(self, fullpath, line, addr, end_sequence=False):
-        row = dwarf.debug.line.Row(self.prologue)
+        row = dwarf.debug.line.Row(0, self.prologue)
         row.addr = addr
         row.file = self.add_file(fullpath)
         row.line = line
