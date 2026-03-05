@@ -675,6 +675,16 @@ def get_percentage(part, total):
     return (float(part) / float(total)) * 100.0
 
 
+def find_diff_offset(b1: bytes, b2: bytes) -> int | None:
+    """Finds the offset of the first differing byte."""
+    for i, (byte1, byte2) in enumerate(zip(b1, b2)):
+        if byte1 != byte2:
+            return i
+    # If one is a prefix of the other, the diff is at the end of the shorter one
+    if len(b1) != len(b2):
+        return min(len(b1), len(b2))
+    return None
+
 class FunctionInfo(object):
     '''A class that accumulates function info from a variety of sources'''
     def __init__(self):
@@ -1493,6 +1503,26 @@ class ProgramHeader(object):
                 return bytes
         return None
 
+    def is_all_zeros(self):
+        '''Get the contents of the program header and check if they are all zeroes'''
+        if self.p_filesz == 0 and self.p_memsz > 0:
+            return True  # This is a zero filled section with no data
+        if self.p_filesz > 0 and self.p_offset > 0:
+            data = self.elf.data
+            if data:
+                data.push_offset_and_seek(self.p_offset)
+                total_size = self.p_filesz
+                chunk_size = 1024
+                for offset in range(0, total_size, chunk_size):
+                    bytes_left = total_size - offset
+                    size = chunk_size if bytes_left >= chunk_size else bytes_left
+                    bytes = data.read_size(size)
+                    if not all(byte == 0 for byte in bytes):
+                        return False
+                data.pop_offset_and_seek()
+            return True
+        return False 
+
     def get_contents_as_extractor(self):
         bytes = self.get_contents()
         return file_extract.FileExtract(io.BytesIO(bytes),
@@ -1505,19 +1535,19 @@ class ProgramHeader(object):
     def contains_vaddr_in_memory(self, vaddr):
         return self.p_vaddr <= vaddr and vaddr < (self.p_vaddr + self.p_memsz)
 
-    def dump(self, flat, f=sys.stdout):
-        if flat:
-            if self.index == 0:
-                f.write('Program Headers:\n')
-                f.write(('Index   p_type           p_flags    '
-                         'p_offset           p_vaddr            '
-                         'p_paddr            p_filesz           '
-                         'p_memsz            p_align\n'))
-                f.write(('======= --------------- ---------- '
-                         '------------------ ------------------ '
-                         '------------------ ------------------ '
-                         '------------------ ------------------\n'))
+    @classmethod
+    def dump_header(self, f=sys.stdout):
+        f.write(('Index   p_type          p_flags    '
+                    'p_offset           p_vaddr            '
+                    'p_paddr            p_filesz           '
+                    'p_memsz            p_align\n'))
+        f.write(('======= --------------- ---------- '
+                    '------------------ ------------------ '
+                    '------------------ ------------------ '
+                    '------------------ ------------------\n'))
 
+    def dump(self, flat, f=sys.stdout, suffix=None):
+        if flat:
             f.write(('[%5u] %-*s 0x%8.8x 0x%16.16x 0x%16.16x 0x%16.16x '
                      '0x%16.16x 0x%16.16x 0x%16.16x') % (
                             self.index, PT.max_width(),
@@ -1525,15 +1555,22 @@ class ProgramHeader(object):
                             self.p_offset, self.p_vaddr, self.p_paddr,
                             self.p_filesz, self.p_memsz, self.p_align))
         else:
-            f.write('Program Header[%u]:' % (self.index))
-            f.write('p_type   = 0x%8.8x %s' % (self.p_type, PT(self.p_type)))
-            f.write('p_flags  = 0x%8.8x' % (self.p_flags))
-            f.write('p_offset = 0x%16.16x' % (self.p_offset))
-            f.write('p_vaddr  = 0x%16.16x' % (self.p_vaddr))
-            f.write('p_paddr  = 0x%16.16x' % (self.p_paddr))
-            f.write('p_filesz = 0x%16.16x' % (self.p_filesz))
-            f.write('p_memsz  = 0x%16.16x' % (self.p_memsz))
+            f.write('Program Header[%u]:\n' % (self.index))
+            f.write('p_type   = 0x%8.8x %s\n' % (self.p_type, PT(self.p_type)))
+            f.write('p_flags  = 0x%8.8x\n' % (self.p_flags))
+            f.write('p_offset = 0x%16.16x\n' % (self.p_offset))
+            f.write('p_vaddr  = 0x%16.16x\n' % (self.p_vaddr))
+            f.write('p_paddr  = 0x%16.16x\n' % (self.p_paddr))
+            f.write('p_filesz = 0x%16.16x\n' % (self.p_filesz))
+            f.write('p_memsz  = 0x%16.16x\n' % (self.p_memsz))
             f.write('p_align  = 0x%16.16x' % (self.p_align))
+        if suffix is not None:
+            f.write(suffix)
+    
+    def __str__(self):
+        s = io.StringIO()
+        self.dump(flat=False, f=s)
+        return s.getvalue()
 
 def st_shndx_to_str(st_shndx):
     if st_shndx == SHN_ABS:
@@ -2808,6 +2845,19 @@ class File(object):
                     return program_headers[i]
         return None
 
+    def find_matching_program_header(self, other_phdr):
+        phdrs = self.get_program_headers()
+        for phdr in phdrs:
+            if phdr.p_type != other_phdr.p_type:
+                continue
+            elif phdr.p_type == PT.LOAD:
+                # Find a program header with the same p_vaddr for PT_LOAD
+                if phdr.p_vaddr == other_phdr.p_vaddr:
+                    return phdr
+            else:
+                print("Not comparing program header:\n {phdr1}")
+        return None
+
     def get_symbols(self):
         '''Common object file format symbol method.'''
         if self.symbols is None and self.is_valid():
@@ -2976,6 +3026,8 @@ class File(object):
                 if options.dump_program_headers:
                     f.write('\n')
             if options.dump_program_headers:
+                f.write('Program headers:\n')
+                ProgramHeader.dump_header(f=f)
                 program_headers = self.get_program_headers()
                 for program_header in program_headers:
                     program_header.dump(flat=True, f=f)
@@ -3545,6 +3597,100 @@ def compare_elf_files(elf1_path, elf2_path):
     if not elf2.is_valid():
         print('error: "%s" is not a valid ELF file' % (elf2_path))
         return
+    print("\nComparing program headers:")
+    elf1_phdrs = elf1.get_program_headers()
+    elf2_phdrs = elf2.get_program_headers()
+    elf1_file_size = elf1.data.get_size()
+    elf2_file_size = elf2.data.get_size()
+    elf1_phdrs_not_in_elf2 = []
+    elf2_phdrs_not_in_elf1 = []
+    elf1_total_phdr_filesz = 0
+    elf2_total_phdr_filesz = 0
+    verified_elf2_phdr_indexes = set()
+    for phdr1 in elf1_phdrs:
+        if phdr1.p_type == PT.NOTE:
+            print("TODO: implement note comparison...")
+        elif phdr1.p_type == PT.LOAD:
+            if phdr1.p_filesz > 0:
+                elf1_total_phdr_filesz += phdr1.p_filesz
+                error1 = None  # Elf1 program header error
+                error = None  # Mismatch in program header between elf1 and elf2
+                if phdr1.p_offset >= elf1_file_size:
+                    error1 = f'error: p_offset is larger than the file size ({elf1_file_size}) for "{elf1_path}"'
+                if phdr1.p_offset + phdr1.p_filesz > elf1_file_size:
+                    error1 = f'error: p_offset + p_filesz ({phdr1.p_offset + phdr1.p_filesz:016x}) is larger than the file size ({elf1_file_size}) for "{elf1_path}"'
+                phdr2 = elf2.find_matching_program_header(phdr1)
+                if phdr2 is None:
+                    if phdr1.p_filesz > 0:
+                        elf1_phdrs_not_in_elf2.append(phdr1)
+                else:
+                    verified_elf2_phdr_indexes.add(phdr2.index)
+                    if phdr1.p_paddr != phdr2.p_paddr:
+                        error = 'error: p_paddr mismatch'
+                    if phdr1.p_filesz != phdr2.p_filesz:
+                        error = 'error: p_filesz mismatch'
+                    if phdr1.p_memsz != phdr2.p_memsz:
+                        error = 'error: p_memsz mismatch'
+                    if phdr1.p_align != phdr2.p_align:
+                        error = 'error: p_align mismatch'
+                    # Only compare contents if there are bytes in the file
+                    # if phdr1.p_filesz == 0 and phdr2.p_filesz == 0:
+                    #     print('success: there are no file contents in either program header')
+                    # else:
+                    #     contents1 = phdr1.get_contents()
+                    #     contents2 = phdr2.get_contents()
+                    #     if contents1 is None:
+                    #         print('error: unable to decode contents of first program header')
+                    #     if contents2 is None:
+                    #         print('error: unable to decode contents of second program header')
+                    #     if contents1 and contents2:
+                    #         if contents1 == contents2:
+                    #             print('success: contents match exactly')
+                    #         else:
+                    #             diff_offset = find_diff_offset(contents1, contents2)
+                    #             print(f'error: contents do not match (starting at offset {diff_offset}, p_vaddr = 0x{diff_offset + phdr1.p_vaddr:x})')
+                if error1 or error:
+                    if error1:
+                        print(error1)
+                    if error:
+                        print(error)
+                    ProgramHeader.dump_header()
+                    phdr1.dump(flat=True, suffix=f' from "{elf1_path}"\n')
+                    if error:
+                        phdr2.dump(flat=True, suffix=f' from "{elf2_path}"\n')
+
+    for phdr2 in elf2_phdrs:
+        if phdr2.p_type == PT.LOAD:
+            if phdr2.p_filesz > 0:
+                elf2_total_phdr_filesz += phdr2.p_filesz
+                error2 = None  # Elf1 program header error
+                if phdr2.p_offset >= elf2_file_size:
+                    error2 = f'error: p_offset is larger than the file size ({elf2_file_size}) for "{elf2_path}"'
+                if phdr2.p_offset + phdr2.p_filesz > elf2_file_size:
+                    error2 = f'error: p_offset + p_filesz ({phdr2.p_offset + phdr2.p_filesz:016x}) is larger than the file size ({elf2_file_size}) for "{elf2_path}"'
+                phdr1 = elf1.find_matching_program_header(phdr2)
+                if phdr1 is None:
+                    if phdr2.p_filesz > 0:
+                        elf2_phdrs_not_in_elf1.append(phdr2)
+                if error2:
+                    print(error2)
+                    ProgramHeader.dump_header()
+                    phdr2.dump(flat=True, suffix=f' from "{elf2_path}"\n')
+
+    if elf1_phdrs_not_in_elf2:
+        print(f'PT_LOAD program headers with non-zero p_filesz values present in "{elf1_path}" but not on "{elf2_path}":')
+        ProgramHeader.dump_header()
+        for phdr in elf1_phdrs_not_in_elf2:
+            phdr.dump(flat=True, suffix=f' from "{elf1_path}"\n')
+
+    if elf2_phdrs_not_in_elf1:
+        print(f'PT_LOAD program headers with non-zero p_filesz values present in "{elf2_path}" but not on "{elf1_path}":')
+        ProgramHeader.dump_header()
+        for phdr in elf2_phdrs_not_in_elf1:
+            phdr.dump(flat=True, suffix=f' from "{elf1_path}"\n')
+    print(f'Total PT_LOAD file size for "{elf1_path}" is {sizeof_fmt(elf1_total_phdr_filesz)}')
+    print(f'Total PT_LOAD file size for "{elf2_path}" is {sizeof_fmt(elf2_total_phdr_filesz)}')
+
     print("\nComparing sections:")
     elf1_section_headers = elf1.get_section_headers()
     elf2_section_headers = elf2.get_section_headers()
