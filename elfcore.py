@@ -22,6 +22,14 @@ def create_option_parser() -> optparse.OptionParser:
         help='Save all memory regions that contain ELF headers.')
 
     parser.add_option(
+        '-m', '--minimize',
+        action='store_true',
+        dest='minimize',
+        default=False,
+        help='Minimize the core file by removing zero PT_LOAD segments and not'
+             ' emitting PT_LOAD entries with no file size.')
+
+    parser.add_option(
         '-a', '--address',
         type='int',
         metavar='ADDR',
@@ -59,6 +67,8 @@ def main():
                         nt_file.dump()
                         options.addresses.append(ph.p_vaddr)
 
+    if options.minimize:
+        elf.ProgramHeader.dump_header()
     for ph in core_elf.get_program_headers():
         if ph.p_type == elf.PT.NOTE:
             min_core_elf.add_program_header(ph)
@@ -68,6 +78,19 @@ def main():
                     if ph.contains_vaddr_in_file(addr):
                         min_core_elf.add_program_header(ph)
                         break
+            elif options.minimize:
+                # Many core files have a lot of program headers with zero file
+                # size and these are not useful as they have no data.
+                if ph.p_filesz == 0 and ph.p_memsz == 0:
+                    ph.dump(flat=True, suffix=' skipping program header with p_filesz == 0 && p_memsz == 0\n')
+                    continue  # Skip
+                if ph.is_all_zeros() and ph.p_filesz > 0:
+                    ph.dump(flat=True, suffix=' converting program header with p_filesz > 0 to be p_filesz = 0 and retain p_memsz\n')
+                    ph.p_filesz = 0  # Set the p_filesz to zero so the data doesn't get copied
+                    min_core_elf.add_program_header(ph)
+                    continue
+                else:
+                    min_core_elf.add_program_header(ph)
 
     min_core_elf.save(options.outfile)
 
