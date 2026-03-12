@@ -49,6 +49,10 @@ def main():
         return
 
     core_elf = elf.File(path=files[0])
+    if core_elf.error:
+        print(core_elf.error)
+        return
+
     min_core_elf = elf.File(header=core_elf.header)
     program_headers = []
 
@@ -85,8 +89,9 @@ def main():
                     ph.dump(flat=True, suffix=' skipping program header with p_filesz == 0 && p_memsz == 0\n')
                     continue  # Skip
                 if ph.is_all_zeros() and ph.p_filesz > 0:
-                    ph.dump(flat=True, suffix=' converting program header with p_filesz > 0 to be p_filesz = 0 and retain p_memsz\n')
+                    ph.dump(flat=True, suffix=' data is all zeros, changing program header to zero fill\n')
                     ph.p_filesz = 0  # Set the p_filesz to zero so the data doesn't get copied
+                    ph.data = None  # If the data had been accessed before, clear it so it doesn't get copied into the new file
                     min_core_elf.add_program_header(ph)
                     continue
                 else:

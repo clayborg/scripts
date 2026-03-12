@@ -1521,7 +1521,7 @@ class ProgramHeader(object):
                         return False
                 data.pop_offset_and_seek()
             return True
-        return False 
+        return False
 
     def get_contents_as_extractor(self):
         bytes = self.get_contents()
@@ -1566,7 +1566,7 @@ class ProgramHeader(object):
             f.write('p_align  = 0x%16.16x' % (self.p_align))
         if suffix is not None:
             f.write(suffix)
-    
+
     def __str__(self):
         s = io.StringIO()
         self.dump(flat=False, f=s)
@@ -2532,7 +2532,11 @@ class File(object):
         offset += self.header.e_phentsize * self.header.e_phnum
         for ph in self.program_headers:
             if ph.data is not None:
-                ph.p_offset = offset + offsetToAlign(ph.p_align, offset)
+                if ph.p_align > 0:
+                    align = ph.p_align
+                else:
+                    align = 0x1000
+                ph.p_offset = offset + offsetToAlign(align, offset)
                 ph.p_filesz = len(ph.data)
                 offset += ph.p_filesz
         with open(path, 'wb') as out_file:
@@ -2548,8 +2552,9 @@ class File(object):
             for ph in self.program_headers:
                 ph.encode(data)
             for ph in self.program_headers:
-                data.file.seek(ph.p_offset, 0)
-                data.file.write(ph.data)
+                if ph.data:
+                    data.file.seek(ph.p_offset, 0)
+                    data.file.write(ph.data)
 
     def get_file_type(self):
         return 'elf'
