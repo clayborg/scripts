@@ -613,13 +613,15 @@ class AT(IntEnum):
     L2_CACHESHAPE = 36
     L3_CACHESHAPE = 37
     MINSIGSTKSZ = 51
-
+    __MAX_WIDTH = 0
     def __str__(self):
         return 'AT_' + self.name
 
     @classmethod
     def max_width(cls):
-        return 17
+        if cls.__MAX_WIDTH == 0:
+            cls.__MAX_WIDTH = max(len(m.name) for m in cls) + 3
+        return cls.__MAX_WIDTH
 
     # We might parse DWARF with user defined attributes. We need to support
     # displaying these unknown attributes.
@@ -1933,7 +1935,7 @@ class NT_FILE(object):
         self.path = path
 
     def dump(self, f=sys.stdout):
-        f.write('[0x%16.16x - 0x%16.16x) file_ofs=0x%16.16x %s\n' %
+        f.write('[0x%16.16x - 0x%16.16x) 0x%16.16x %s\n' %
                 (self.start, self.end, self.file_ofs, self.path))
 
 class Note(object):
@@ -1942,6 +1944,12 @@ class Note(object):
         self.name = name
         self.type = type
         self.data = data
+
+    def get_type_name(self):
+        if self.name in ['CORE', 'LINUX']:
+            return f' ({NT(self.type)})'
+        else:
+            return ''
 
     @classmethod
     def decode(cls, data):
@@ -1991,77 +1999,18 @@ class Note(object):
                             data.get_byte_order(),
                             data.get_addr_size()))
 
-    def get_nt_files(self):
+    def dump_header(self, options, f=sys.stdout):
         self.data.seek(0)
-        nt_files = None
-        if (self.name == 'CORE' or self.name == 'LINUX') and self.type == NT.FILE:
-            nt_files = []
-            count = self.data.get_address()
-            page_size = self.data.get_address()
-            for i in range(count):
-                start = self.data.get_address()
-                end = self.data.get_address()
-                file_ofs = self.data.get_address()
-                nt_files.append(NT_FILE(start, end, file_ofs, None))
-            for i in range(count):
-                nt_files[i].path = self.data.get_c_string()
-        return nt_files
+        f.write('\nname = "%s", type = %#8.8x%s, size = 0x%8.8x\n' % (self.name, self.type, self.get_type_name(), self.data.get_size()))
+        # Dump the size and binary if verbose is enabled.
+        if options.verbose:
+            self.data.dump(num_per_line=options.num_per_line, f=f)
 
     def dump(self, options, f=sys.stdout):
         self.data.seek(0)
-        f.write('name = "%s"\n' % (self.name))
-        if self.name == 'CORE' or self.name == 'LINUX':
-            f.write('type = %i (%s)\n' % (self.type, NT(self.type)))
-            if self.type == NT.FILE:
-                # Format of NT_FILE note:
-                #
-                # long count     -- how many files are mapped
-                # long page_size -- units for file_ofs
-                # array of [COUNT] elements of
-                #   long start
-                #   long end
-                #   long file_ofs
-                # followed by COUNT filenames in ASCII: "FILE1" NUL "FILE2" NUL
-                count = self.data.get_address()
-                page_size = self.data.get_address()
-                f.write('    count     = 0x%16.16x (%u)\n' % (count, count))
-                f.write('    page_size = 0x%16.16x (%u)\n' % (page_size,
-                                                              page_size))
-                elements = list()
-                f.write('    Index start              end                '
-                        'file_ofs           path\n')
-                for i in range(count):
-                    start = self.data.get_address()
-                    end = self.data.get_address()
-                    file_ofs = self.data.get_address()
-                    elements.append([start, end, file_ofs])
-                f.write('    ===== ------------------ ------------------ '
-                        '------------------ '
-                        '-------------------------------------\n')
-                for i in range(count):
-                    path = self.data.get_c_string()
-                    f.write('    [%3u] 0x%16.16x 0x%16.16x 0x%16.16x %s\n' %
-                            (i, elements[i][0], elements[i][1], elements[i][2],
-                             path))
-                f.write('\n')
-            elif self.type == NT.AUXV:
-                f.write('NT_AUXV\n')
-                while True:
-                    auxv_entry_type = self.data.get_address(-1)
-                    if auxv_entry_type == -1:
-                        break
-                    auxv_entry_value = self.data.get_address(0)
-                    f.write('    %-*s = %#x\n' % (AT.max_width(),
-                                                  AT(auxv_entry_type),
-                                                  auxv_entry_value))
-            elif self.type == NT.PRSTATUS:
-                prstatus = PRSTATUS.decode(self.data)
-                prstatus.dump(f=f)
-                f.write('\n')
-            else:
-                self.data.dump(num_per_line=options.num_per_line, f=f)
-        else:
-            f.write('type = 0x%8.8x (%u)\n' % (self.type, self.type))
+        self.dump_header(options, f=f)
+        # Bytes will have been dumped in dump_header if verbose is enabled.
+        if not options.verbose:
             self.data.dump(num_per_line=options.num_per_line, f=f)
 
     @classmethod
@@ -2072,8 +2021,106 @@ class Note(object):
             note = Note.decode(data)
             if note is None or note.name is None or len(note.name) == 0:
                 break
+            if note.name == 'CORE' or note.name == 'LINUX':
+                if note.type == NT.FILE:
+                    notes.append(Note_NT_FILE(note.name, note.type, note.data))
+                    continue
+                elif note.type == NT.AUXV:
+                    notes.append(Note_NT_AUXV(note.name, note.type, note.data))
+                    continue
+                elif note.type == NT.PRSTATUS:
+                    notes.append(Note_NT_PRSTATUS(note.name, note.type, note.data))
+                    continue
             notes.append(note)
         return notes
+
+class Note_NT_PRSTATUS(Note):
+    '''Represents an NT_PRSTATUS note in a core file.'''
+    def __init__(self, name, type, data):
+        super(Note_NT_PRSTATUS, self).__init__(name, type, data)
+        self.prstatus = None
+
+    def get_prstatus(self):
+        if self.prstatus is None:
+            self.prstatus = PRSTATUS.decode(self.data)
+        return self.prstatus
+
+    def dump(self, options, f=sys.stdout):
+        super().dump_header(options, f=f)
+        self.get_prstatus().dump(f=f)
+
+class Note_NT_FILE(Note):
+    '''Represents an NT_FILE note in a core file.'''
+    def __init__(self, name, type, data):
+        super(Note_NT_FILE, self).__init__(name, type, data)
+        self.nt_files = None
+
+    def get_entries(self):
+        if self.nt_files is None:
+            self.data.seek(0)
+            self.nt_files = []
+            self.count = self.data.get_address()
+            self.page_size = self.data.get_address()
+            for i in range(self.count):
+                start = self.data.get_address()
+                end = self.data.get_address()
+                file_ofs = self.data.get_address()
+                self.nt_files.append(NT_FILE(start, end, file_ofs, None))
+            for i in range(self.count):
+                self.nt_files[i].path = self.data.get_c_string()
+        return self.nt_files
+
+    def dump(self, options, f=sys.stdout):
+        entries = self.get_entries()
+        super().dump_header(options, f=f)
+        f.write('    count     = 0x%16.16x (%u)\n' % (self.count, self.count))
+        f.write('    page_size = 0x%16.16x (%u)\n' % (self.page_size,
+                                                      self.page_size))
+        f.write('    Index Address Range                '
+                '             file_ofs           path\n')
+        f.write('    ===== ----------------------------------------- '
+                '------------------ '
+                '-------------------------------------\n')
+        for i, nt_file in enumerate(entries):
+            f.write('    [%3u] ' % (i))
+            nt_file.dump(f=f)
+        f.write('\n')
+
+class AuxvEntry(object):
+    def __init__(self, type, value):
+        self.type = type
+        self.value = value
+
+class Note_NT_AUXV(Note):
+    '''Represents an NT_AUXV note in a core file.'''
+    def __init__(self, name, type, data):
+        super(Note_NT_AUXV, self).__init__(name, type, data)
+        self.auxv_entries = None
+
+    def get_entries(self):
+        if self.auxv_entries is None:
+            self.auxv_entries = []
+            while True:
+                _type = self.data.get_address(None)
+                if _type is None:
+                    break
+                _value = self.data.get_address(0)
+                self.auxv_entries.append(AuxvEntry(AT(_type), _value))
+        return self.auxv_entries
+
+    def dump(self, options, f=sys.stdout):
+        entries = self.get_entries()
+        super().dump_header(options, f=f)
+        for entry in entries:
+            if options.verbose:
+                f.write('    %#2.2x (%-*s) = %#16.16x\n' % (entry.type,
+                                                         AT.max_width(),
+                                                         entry.type,
+                                                         entry.value))
+            else:
+                f.write('    %-*s = %#16.16x\n' % (AT.max_width(),
+                                                   entry.type,
+                                                   entry.value))
 
 
 class ELFDynamic(object):
@@ -2492,25 +2539,6 @@ class File(object):
                     note.data.seek(0)
                     return note
         return None
-
-    def get_nt_files(self):
-        note = self.get_note(['CORE', 'LINUX'], NT.FILE)
-        if note is None:
-            return None
-        return note.get_nt_files()
-
-    def get_auxv_entries(self):
-        note = self.get_note(['CORE', 'LINUX'], NT.AUXV)
-        if note is None:
-            return []
-        auxv_entries = []
-        while True:
-            auxv_entry_type = note.data.get_address(None)
-            if auxv_entry_type is None:
-                break
-            auxv_entry_value = note.data.get_address(0)
-            auxv_entries.append((AT(auxv_entry_type), auxv_entry_value))
-        return auxv_entries
 
     def get_symbol_size(self):
         addr_size = self.get_addr_size()
@@ -3053,7 +3081,7 @@ class File(object):
         p_type = PT(type)
         f.write('Dumping program headers with type %s:\n' % (p_type))
         program_headers = self.get_program_headers()
-        if not program_headers:
+        if program_headers:
             found = False
             for ph in program_headers:
                 if ph.p_type == p_type:
