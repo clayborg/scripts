@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import json
 import optparse
 import elf
 
@@ -38,6 +39,14 @@ def create_option_parser() -> optparse.OptionParser:
         default=[],
         help='Specify an address whose memory contents will be preserved. '
              'This can be specified multple times')
+
+    parser.add_option(
+        '-j', '--elf-json',
+        type='str',
+        metavar='PATH',
+        dest='elf_json',
+        default=[],
+        help='Specify a JSON file with contents to be added to the output ELF core file.')
     return parser
 
 def main():
@@ -82,7 +91,7 @@ def main():
                     if ph.contains_vaddr_in_file(addr):
                         min_core_elf.add_program_header(ph)
                         break
-            elif options.minimize:
+            if options.minimize:
                 # Many core files have a lot of program headers with zero file
                 # size and these are not useful as they have no data.
                 if ph.p_filesz == 0 and ph.p_memsz == 0:
@@ -96,7 +105,15 @@ def main():
                     continue
                 else:
                     min_core_elf.add_program_header(ph)
-
+    if options.elf_json:
+        with open(options.elf_json, 'r') as f:
+            elf_json = json.load(f)
+            program_headers_json = elf_json.get('program_headers', [])
+            for ph_dict in program_headers_json:
+                ph = elf.ProgramHeader.from_dict(ph_dict)
+                if ph is not None:
+                    ph.elf = min_core_elf
+                    min_core_elf.add_program_header(ph)
     min_core_elf.save(options.outfile)
 
 

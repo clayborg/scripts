@@ -1465,6 +1465,12 @@ class ProgramHeader(object):
             return 56
 
     @classmethod
+    def from_dict(cls, ph_dict):
+        if 'data' in ph_dict:
+            ph_dict['data'] = bytes.fromhex(ph_dict['data'])
+        return cls(**ph_dict)
+
+    @classmethod
     def decode(cls, elf, index):
         data = elf.data
         addr_size = elf.get_addr_size()
@@ -1979,7 +1985,7 @@ class Note(object):
                                        elf.get_byte_order(),
                                        elf.get_addr_size())
         prstatus.encode(data)
-        return Note("CORE", NT_PRSTATUS,
+        return Note("CORE", NT.PRSTATUS,
                     file_extract.FileExtract(
                             io.BytesIO(data.file.getvalue()),
                             data.get_byte_order(),
@@ -2005,7 +2011,7 @@ class Note(object):
         self.data.seek(0)
         f.write('name = "%s"\n' % (self.name))
         if self.name == 'CORE' or self.name == 'LINUX':
-            f.write('type = %s\n' % (self.type))
+            f.write('type = %i (%s)\n' % (self.type, NT(self.type)))
             if self.type == NT.FILE:
                 # Format of NT_FILE note:
                 #
@@ -2547,7 +2553,8 @@ class File(object):
     def add_program_header(self, ph):
         if self.program_headers is None:
             self.program_headers = []
-        ph.data = ph.get_contents()
+        if ph.data is None:
+            ph.data = ph.get_contents()
         self.program_headers.append(ph)
 
     def add_notes_program_header(self, note):
@@ -2840,7 +2847,9 @@ class File(object):
         if self.section_headers is None:
             self.section_headers = list()
             if self.is_valid():
-                if self.header.e_shnum > 0:
+                if (self.header.e_shnum > 0 and
+                    self.header.e_shentsize > 0 and
+                    self.header.e_shoff > self.header.e_ehsize):
                     self.data.seek(self.header.e_shoff)
                     for section_index in range(self.header.e_shnum):
                         self.section_headers.append(
@@ -3034,7 +3043,7 @@ class File(object):
                                                      options.num_per_line, f)
             if found:
                 return True
-            f.write('error: no sections with type %s were found\n' % (sh_type_enum))            
+            f.write('error: no sections with type %s were found\n' % (sh_type_enum))
         else:
             f.write('error: no section headers\n')
         return False
@@ -3042,7 +3051,7 @@ class File(object):
     def dump_program_headers_with_type(self, options, type,
                                        f=sys.stdout):
         p_type = PT(type)
-        f.write('Dumping section with type %s:\n' % (p_type))
+        f.write('Dumping program headers with type %s:\n' % (p_type))
         program_headers = self.get_program_headers()
         if not program_headers:
             found = False
@@ -3286,6 +3295,10 @@ class File(object):
                 f.write('\n')
                 for section_type in options.section_types:
                     self.dump_section_headers_with_type(options, section_type)
+            if options.program_header_types:
+                f.write('\n')
+                for ph_type in options.program_header_types:
+                    self.dump_program_headers_with_type(options, ph_type)
             if options.dump_notes:
                 f.write('\n')
                 if not self.dump_program_headers_with_type(options, PT.NOTE):
@@ -3938,11 +3951,18 @@ def main():
         help=('Dump the .gnu.hash section contents'))
     parser.add_option(
         '--section-type',
-        type='string',
+        type='int',
         metavar='SH_TYPE',
         dest='section_types',
         action='append',
         help='Specify one or more section types to dump')
+    parser.add_option(
+        '--program-header-type',
+        type='int',
+        metavar='PT_TYPE',
+        dest='program_header_types',
+        action='append',
+        help='Specify one or more program header types to dump')
     parser.add_option(
         '--api',
         action='store_true',
