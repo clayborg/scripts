@@ -621,6 +621,25 @@ class AT(IntEnum):
     def max_width(cls):
         return 17
 
+    # We might parse DWARF with user defined attributes. We need to support
+    # displaying these unknown attributes.
+    @classmethod
+    def _missing_(cls, value):
+        if isinstance(value, int):
+            return cls.create_pseudo_member_(value)
+        return None # will raise the ValueError in Enum.__new__
+
+    @classmethod
+    def create_pseudo_member_(cls, value):
+        print("AT.create_pseudo_member for", value)
+        pseudo_member = cls._value2member_map_.get(value, None)
+        if pseudo_member is None:
+            new_member = int.__new__(cls, value)
+            new_member._name_ = '%#8.8x' % value
+            new_member._value_ = value
+            pseudo_member = cls._value2member_map_.setdefault(value, new_member)
+        return pseudo_member
+
 
 class SHF(IntFlag):
     WRITE = 0x1  # Section data should be writable during execution.
@@ -2435,35 +2454,57 @@ class File(object):
         if self.notes is not None:
             return self.notes
         self.notes = []
-        sections = self.get_sections_by_type(SHT.NOTE)
-        if sections:
-            for section in sections:
-                data = section.get_contents_as_extractor()
-                notes = Note.extract_notes(data)
-                if notes:
-                    self.notes.extend(notes)
-            return self.notes
-
+        # Always try to grab notes from program headers first.
         for ph in self.get_program_headers_by_type(PT.NOTE):
             data = ph.get_contents_as_extractor()
             notes = Note.extract_notes(data)
             if notes:
                 self.notes.extend(notes)
+        if len(self.notes) == 0:
+            # Fall back to grabbing notes from section headers.
+            sections = self.get_sections_by_type(SHT.NOTE)
+            if sections:
+                for section in sections:
+                    data = section.get_contents_as_extractor()
+                    notes = Note.extract_notes(data)
+                    if notes:
+                        self.notes.extend(notes)
         return self.notes
 
-    def get_note(self, name, type):
-        for note in self.get_notes():
-            if note.name == name and note.type == type:
-                return note
+
+    def get_note(self, name_or_names, type):
+        if isinstance(name_or_names, list):
+            # name_or_names is a list of names
+            for note in self.get_notes():
+                if note.name in name_or_names and note.type == type:
+                    note.data.seek(0)
+                    return note
+        else:
+            # name_or_names is a single name
+            for note in self.get_notes():
+                if note.name == name_or_names and note.type == type:
+                    note.data.seek(0)
+                    return note
         return None
 
     def get_nt_files(self):
-        note = self.get_note('CORE', NT.FILE)
+        note = self.get_note(['CORE', 'LINUX'], NT.FILE)
         if note is None:
-            note = self.get_note('LINUX', NT.FILE)
-            if note is None:
-                return None
+            return None
         return note.get_nt_files()
+
+    def get_auxv_entries(self):
+        note = self.get_note(['CORE', 'LINUX'], NT.AUXV)
+        if note is None:
+            return []
+        auxv_entries = []
+        while True:
+            auxv_entry_type = note.data.get_address(None)
+            if auxv_entry_type is None:
+                break
+            auxv_entry_value = note.data.get_address(0)
+            auxv_entries.append((AT(auxv_entry_type), auxv_entry_value))
+        return auxv_entries
 
     def get_symbol_size(self):
         addr_size = self.get_addr_size()
@@ -2795,10 +2836,10 @@ class File(object):
         else:
             return None
 
-    def get_section_headers(self):
+    def get_section_headers(self) -> list[SectionHeader]:
         if self.section_headers is None:
+            self.section_headers = list()
             if self.is_valid():
-                self.section_headers = list()
                 if self.header.e_shnum > 0:
                     self.data.seek(self.header.e_shoff)
                     for section_index in range(self.header.e_shnum):
@@ -2811,7 +2852,7 @@ class File(object):
                         section.name = shstrtab.get_string(section.sh_name)
         return self.section_headers
 
-    def get_section_containing_address(self, addr):
+    def get_section_containing_address(self, addr) -> SectionHeader | None:
         sections = self.get_section_headers()
         for section in sections:
             if section.contains(addr):
@@ -2820,28 +2861,28 @@ class File(object):
 
     def get_program_headers(self) -> list[ProgramHeader]:
         if self.program_headers is None:
+            self.program_headers = list()
             if self.is_valid():
                 self.data.seek(self.header.e_phoff)
-                self.program_headers = list()
                 for idx in range(self.header.e_phnum):
                     self.program_headers.append(ProgramHeader.decode(self,
                                                                      idx))
         return self.program_headers
 
-    def get_program_headers_by_type(self, p_type):
+    def get_program_headers_by_type(self, p_type) -> list[ProgramHeader]:
         matching_phs = []
         for ph in self.get_program_headers():
             if ph.p_type == p_type:
                 matching_phs.append(ph)
         return matching_phs
 
-    def get_program_headers_by_vaddr_in_file(self, vaddr):
+    def get_program_headers_by_vaddr_in_file(self, vaddr) -> ProgramHeader | None:
         for ph in self.get_program_headers():
             if ph.contains_vaddr_in_file(vaddr):
                 return ph
         return None
 
-    def get_program_header_by_type(self, p_type, start_idx=0):
+    def get_program_header_by_type(self, p_type, start_idx=0) -> ProgramHeader | None:
         program_headers = self.get_program_headers()
         count = len(program_headers)
         if start_idx < count:
@@ -2850,7 +2891,7 @@ class File(object):
                     return program_headers[i]
         return None
 
-    def find_matching_program_header(self, other_phdr):
+    def find_matching_program_header(self, other_phdr) -> ProgramHeader | None:
         phdrs = self.get_program_headers()
         for phdr in phdrs:
             if phdr.p_type != other_phdr.p_type:
@@ -2863,7 +2904,7 @@ class File(object):
                 print("Not comparing program header:\n {phdr1}")
         return None
 
-    def get_symbols(self):
+    def get_symbols(self) -> list[Symbol]:
         '''Common object file format symbol method.'''
         if self.symbols is None and self.is_valid():
             self.symbols = list()
@@ -2890,19 +2931,19 @@ class File(object):
                     self.symbols.append(symbol)
         return self.symbols
 
-    def get_dynsym(self):
+    def get_dynsym(self) -> list[Symbol]:
         '''Get only the dynamic symbol table. The dynamic symbol table is
            contained in the section whose type is SHT_DYNSYM.'''
         self.get_symbols()
         return self.dynsym
 
-    def get_symtab(self):
+    def get_symtab(self) -> list[Symbol]:
         '''Get only the normal symbol table. The normal symbol table is
            contained in the section whose type is SHT_SYMTAB.'''
         self.get_symbols()
         return self.symtab
 
-    def get_symtab_functions(self, sym_tree=None):
+    def get_symtab_functions(self, sym_tree=None) -> SymbolTree:
         '''Get the symbol table functions'''
         if sym_tree is None:
             sym_tree = SymbolTree()
@@ -2969,13 +3010,15 @@ class File(object):
             symbol.dump(flat=False, f=f)
 
     def dump_section_headers_with_type(self, options, sh_type,
-                                       f=sys.stdout):
+                                       f=sys.stdout) -> bool:
         sh_type_enum = SHT(sh_type)
         f.write('Dumping section with type %s:\n' % (sh_type_enum))
         sections = self.get_section_headers()
         if sections:
+            found = False
             for section in sections:
                 if section.sh_type == sh_type:
+                    found = True
                     section.dump(flat=False, f=f)
                     f.write('\n')
                     contents = section.get_contents()
@@ -2989,17 +3032,23 @@ class File(object):
                             file_extract.dump_memory(section.sh_addr,
                                                      contents,
                                                      options.num_per_line, f)
+            if found:
+                return True
+            f.write('error: no sections with type %s were found\n' % (sh_type_enum))            
         else:
-            f.write('error: no section with type %#x were found\n' % (sh_type))
+            f.write('error: no section headers\n')
+        return False
 
     def dump_program_headers_with_type(self, options, type,
                                        f=sys.stdout):
         p_type = PT(type)
         f.write('Dumping section with type %s:\n' % (p_type))
         program_headers = self.get_program_headers()
-        if program_headers:
+        if not program_headers:
+            found = False
             for ph in program_headers:
                 if ph.p_type == p_type:
+                    found = True
                     ph.dump(flat=False, f=f)
                     f.write('\n')
                     contents = ph.get_contents()
@@ -3012,9 +3061,12 @@ class File(object):
                         else:
                             file_extract.dump_memory(ph.p_vaddr, contents,
                                                      options.num_per_line, f)
+            if found:
+                return True
+            f.write('error: no program headers with type %s were found\n' % (p_type))
         else:
-            f.write('error: no program headers with type %#x were found\n' % (
-                    type))
+            f.write('error: no program headers')
+        return False
 
     def dump_file_summary(self, f=sys.stdout):
         f.write('ELF: %s (%s)\n' % (self.path, self.get_arch()))
@@ -3236,10 +3288,20 @@ class File(object):
                     self.dump_section_headers_with_type(options, section_type)
             if options.dump_notes:
                 f.write('\n')
-                if len(self.get_section_headers()):
+                if not self.dump_program_headers_with_type(options, PT.NOTE):
                     self.dump_section_headers_with_type(options, SHT.NOTE)
+            if options.dump_auxv:
+                note = self.get_note(['CORE', 'LINUX'], NT.AUXV)
+                if note:
+                    note.dump(options)
                 else:
-                    self.dump_program_headers_with_type(options, PT.NOTE)
+                    print('error: no NT_AUXV found in notes')
+            if options.dump_nt_file:
+                note = self.get_note(['CORE', 'LINUX'], NT.FILE)
+                if note:
+                    note.dump(options)
+                else:
+                    print('error: no NT_FILE found in notes')
             if options.dump_dynamic:
                 dynamic_entries = self.get_dynamic()
                 for dynamic_entry in dynamic_entries:
@@ -3469,6 +3531,10 @@ def user_specified_options(options):
     if options.dump_header:
         return True
     if options.dump_notes:
+        return True
+    if options.dump_auxv:
+        return True
+    if options.dump_nt_file:
         return True
     if options.section_names:
         return True
@@ -3810,6 +3876,18 @@ def main():
         action='store_true',
         dest='dump_notes',
         help='Dump any notes in the ELF file program and section headers',
+        default=False)
+    parser.add_option(
+        '--auxv',
+        action='store_true',
+        dest='dump_auxv',
+        help='Dump NT_AUXV notes.',
+        default=False)
+    parser.add_option(
+        '--nt-file',
+        action='store_true',
+        dest='dump_nt_file',
+        help='Dump NT_FILE notes.',
         default=False)
     parser.add_option(
         '-N', '--num-per-line',
