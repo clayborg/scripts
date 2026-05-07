@@ -290,6 +290,19 @@ class FileEncode:
         if null_terminate:
             self.put_sint8(0)
 
+    def put_fixed_length_c_string(self, value, length):
+        if length == 0:
+            raise ValueError('length must be greater than zero')
+        s = value.encode('utf-8')
+        value_len = len(s)
+        if value_len >= length:
+            raise ValueError('string is too long to fit in the fixed length of %u bytes' % (length))
+        self.file.write(s)
+        if value_len < length:
+            padding_len = length - value_len
+            for i in range(padding_len):
+                self.put_sint8(0)
+
     def put_sint8(self, value):
         '''Encode a int8_t into the file at the current file position'''
         self.file.write(struct.pack(self.unpack_helper.s8, value))
