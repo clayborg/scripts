@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from ast import List
 import binascii
 from collections import defaultdict
 from enum import IntEnum, IntFlag
@@ -15,7 +16,7 @@ import zlib
 import dwarf.context
 import dwarf.options
 from dwarf.ranges import AddressRange, AddressRangeList
-import file_extract
+from file_extract import FileExtract, FileEncode
 
 # typedef uint32_t Elf32_Addr
 # typedef uint32_t Elf32_Off
@@ -500,6 +501,21 @@ class PT(IntEnum):
     ARM_UNWIND = 0x70000001
 
     @classmethod
+    def from_object(cls, value):
+        # construct the PT enum value from the given object. The object can be
+        # an int or a string. If it's a string, it can optionally start with
+        # 'PT_'.
+        if isinstance(value, int):
+            return cls(value)
+        elif isinstance(value, str):
+            if value.startswith('PT_'):
+                value = value[3:]
+            return cls[value]
+        elif isinstance(value, cls):
+            return value
+        raise ValueError('Invalid value type: %s. Must be int, str, or %s instance.' % (type(value), cls.__name__))
+
+    @classmethod
     def max_width(cls):
         return 15
 
@@ -523,10 +539,13 @@ class PT(IntEnum):
         return pseudo_member
 
 
-class PF(IntFlag):
-    PF_X = 1  # Execute
-    PF_W = 2  # Write
-    PF_R = 4  # Read
+class PF(IntEnum):
+    X = 1  # Execute
+    W = 2  # Write
+    R = 4  # Read
+
+    def __str__(self):
+        return 'PF_' + self.name
 
 
 # Note types
@@ -564,6 +583,21 @@ class NT(IntEnum):
     METAG_CBUF = 0x500
     METAG_RPIPE = 0x501
     METAG_TLS = 0x502
+
+    @classmethod
+    def from_object(cls, value):
+        # construct the NT enum value from the given object. The object can be
+        # an int or a string. If it's a string, it can optionally start with
+        # 'NT_'.
+        if isinstance(value, int):
+            return cls(value)
+        elif isinstance(value, str):
+            if value.startswith('NT_'):
+                value = value[3:]
+            return cls[value]
+        elif isinstance(value, cls):
+            return value
+        raise ValueError('Invalid value type: %s. Must be int, str, or %s instance.' % (type(value), cls.__name__))
 
     def __str__(self):
         if self.name.startswith('_'):
@@ -616,6 +650,23 @@ class AT(IntEnum):
     __MAX_WIDTH = 0
     def __str__(self):
         return 'AT_' + self.name
+
+
+    @classmethod
+    def from_object(cls, value):
+        # construct the AT enum value from the given object. The object can be
+        # an int or a string. If it's a string, it can optionally start with
+        # 'AT_'.
+        if isinstance(value, int):
+            return cls(value)
+        elif isinstance(value, str):
+            if value.startswith('AT_'):
+                value = value[3:]
+            return cls[value]
+        elif isinstance(value, cls):
+            return value
+        raise ValueError('Invalid value type: %s. Must be int, str, or %s instance.' % (type(value), cls.__name__))
+
 
     @classmethod
     def max_width(cls):
@@ -706,7 +757,24 @@ def find_diff_offset(b1: bytes, b2: bytes) -> int | None:
         return min(len(b1), len(b2))
     return None
 
-class FunctionInfo(object):
+def object_to_bytes(obj) -> bytes:
+    '''
+    Convert an object to bytes. The object can be a bytes object which requires
+    no conversion, a string (which is interpreted as hex), or a list of strings
+    (which are concatenated and interpreted as hex).
+    '''
+    if isinstance(obj, bytes):
+        return obj
+    if isinstance(obj, str):
+        try:
+            return bytes.fromhex(obj)
+        except ValueError:
+            return obj.encode('utf-8')
+    elif isinstance(obj, list):
+        return b"".join([bytes.fromhex(x) for x in obj])
+    raise ValueError('Unsupported object type: %s' % type(obj))
+
+class FunctionInfo:
     '''A class that accumulates function info from a variety of sources'''
     def __init__(self):
         self.addr_to_entry = {}
@@ -797,7 +865,7 @@ class FunctionInfo(object):
         for entry in sorted_entries:
             entry.dump(f=f)
 
-    class Entry(object):
+    class Entry:
         def __init__(self, addr, size=0, name=None, source=None, isa=None):
             self.range = AddressRange(addr, addr + size)
             self.names = []
@@ -964,7 +1032,7 @@ class DF_1(IntFlag):
     __str__ = __repr__
 
 
-class Header(object):
+class Header:
     '''Represents the ELF header for an ELF file'''
     def __init__(self, elf=None, e_ident=None, e_type=0, e_machine=0,
                  e_version=0, e_entry=0, e_phoff=0, e_shoff=0, e_flags=0,
@@ -1086,6 +1154,22 @@ class Header(object):
         strm.put_uint16(self.e_shnum)
         strm.put_uint16(self.e_shstrndx)
 
+    def encode_yaml(self, f):
+        if self.e_ident is None:
+            raise ValueError('e_ident is required to encode ELF header to YAML')
+        f.write('--- !ELF\n')
+        f.write('FileHeader:\n')
+        f.write('  Class:           %s\n' % (EC(self.e_ident[EI.CLASS])))
+        if self.e_ident[EI.OSABI] != ELFOSABI.NONE:
+            f.write('  OSABI: %s\n' % (ELFOSABI(self.e_ident[EI.OSABI])))
+        if self.e_ident[EI.ABIVERSION] != 0:
+            f.write('  ABIVersion: %u\n' % (self.e_ident[EI.ABIVERSION]))
+        f.write('  Data:            %s\n' % (ED(self.e_ident[EI.DATA])))
+        f.write('  Type:            %s\n' % (ET(self.e_type)))
+        f.write('  Machine:         %s\n' % (EM(self.e_machine)))
+        if self.e_entry != 0:
+            f.write('  Entry:           0x%16.16x\n' % (self.e_entry))
+
     def get_arch(self):
         if self.e_machine == EM.EM_X86_64:
             return 'x86_64'
@@ -1191,7 +1275,7 @@ class Header(object):
         return 0
 
 
-class CompressedHeader(object):
+class CompressedHeader:
     '''
     struct Elf32_Chdr {
       uint32_t ch_type;
@@ -1231,7 +1315,7 @@ class CompressedHeader(object):
             f.write('ch_addralign = %#16.16x\n' % (self.ch_addralign))
 
 
-class SectionHeader(object):
+class SectionHeader:
     '''
     struct Elf32_Shdr {
       uint32_t sh_name;      // Section name (index into string table)
@@ -1415,12 +1499,10 @@ class SectionHeader(object):
 
     def get_contents_as_extractor(self):
         bytes = self.get_contents()
-        return file_extract.FileExtract(io.BytesIO(bytes),
-                                        self.elf.data.get_byte_order(),
-                                        self.elf.data.addr_size)
+        return self.elf.create_extractor(io.BytesIO(bytes))
 
 
-class ProgramHeader(object):
+class ProgramHeader:
     '''
         struct Elf32_Phdr {
           uint32_t p_type;   // Type of segment
@@ -1459,6 +1541,7 @@ class ProgramHeader(object):
         self.p_flags = p_flags
         self.p_align = p_align
         self.data = data  # used for generating ELF files
+        self.contained_sections = []  # used for generating ELF files
 
     def get_size(self):
         if self.elf.get_addr_size() == 4:
@@ -1467,10 +1550,39 @@ class ProgramHeader(object):
             return 56
 
     @classmethod
-    def from_dict(cls, ph_dict):
-        if 'data' in ph_dict:
-            ph_dict['data'] = bytes.fromhex(ph_dict['data'])
-        return cls(**ph_dict)
+    def from_dict(cls, elf, d):
+        # Used when importing from a JSON file.
+
+        # The data field can stored as a hex string in the JSON file, so we need
+        # to convert it back to bytes.
+        if 'data' in d:
+            d['data'] = object_to_bytes(d['data'])
+        # Convert the p_type if needed.
+        if 'p_type' in d:
+            d['p_type'] = PT.from_object(d['p_type'])
+
+        notes = []
+        addr_size = elf.get_addr_size()
+        offset_size = addr_size
+        byte_order = elf.get_byte_order()
+        note_dicts = d.get('notes')
+        if note_dicts is not None:
+            # Remove the 'notes' field from the dict since it's not a field in
+            # the program header.
+            del d['notes']
+            # Convert all notes from dicts to Note objects and encode their
+            # contents to bytes for the program header data.
+            for note_dict in note_dicts:
+                note = Note.from_dict(elf, note_dict)
+                note.dump(options=None)  # REMOVE THIS LINE
+                notes.append(note)
+            # Append all note bytes together for the program header data.
+            strm = elf.create_encoder()
+            for note in notes:
+                note.encode(strm)
+            d['data'] = strm.getvalue()
+
+        return cls(**d)
 
     @classmethod
     def decode(cls, elf, index):
@@ -1519,8 +1631,55 @@ class ProgramHeader(object):
             strm.put_uint64(self.p_memsz)
             strm.put_uint64(self.p_align)
 
+    def get_contained_sections(self):
+        if self.contained_sections is None:
+            self.contained_sections = []
+            for section in self.elf.get_section_headers():
+                if self.contains_vaddr_in_memory(section.sh_addr):
+                    self.contained_sections.append(section)
+        return self.contained_sections
+
+    def encode_yaml(self, f):
+        f.write('  - Type:            %s\n' % (PT(self.p_type)))
+        if self.p_flags:
+            f.write('    Flags:           [ ')
+            flags = []
+            for flag in PF:
+                if self.p_flags & flag:
+                    flags.append(str(PF(flag)))
+            f.write(', '.join(flags))
+            f.write(' ]\n')
+        sections = self.get_contained_sections()
+        if sections:
+            f.write('    FirstSec:        %s\n' % (sections[0].name))
+            f.write('    LastSec:         %s\n' % (sections[-1].name))
+        if self.p_vaddr != 0:
+            f.write('    VAddr:           0x%x\n' % (self.p_vaddr))
+        if self.p_paddr != 0:
+            f.write('    PAddr:           0x%x\n' % (self.p_paddr))
+        if self.p_align != 0:
+            f.write('    Align:           0x%x\n' % (self.p_align))
+        if self.p_filesz != 0:
+            f.write('    FileSize:        0x%x\n' % (self.p_filesz))
+        if self.p_memsz != 0:
+            f.write('    MemSize:         0x%x\n' % (self.p_memsz))
+        if self.p_offset != 0:
+            f.write('    Offset:          0x%x\n' % (self.p_offset))
+
+    def encode_yaml_section_data(self, f):
+        if not self.get_contained_sections():
+            # No contained sections. Check if this program header has data and if so, encode it as a hex string.
+            bytes = self.get_contents()
+            if bytes:
+                f.write('  - Type:            Fill\n')
+                f.write('    Pattern:         %s\n' % (bytes.hex()))
+                f.write('    Size:            0x%x\n' % (len(bytes)))
+                f.write('    Offset:          0x%x\n' % (self.p_offset))
+                return True
+        return False
+
     def get_contents(self):
-        '''Get the program header contents as a python string'''
+        '''Get the program header contents as a bytes'''
         if self.p_filesz > 0 and self.p_offset > 0:
             data = self.elf.data
             if data:
@@ -1552,9 +1711,7 @@ class ProgramHeader(object):
 
     def get_contents_as_extractor(self):
         bytes = self.get_contents()
-        return file_extract.FileExtract(io.BytesIO(bytes),
-                                        self.elf.data.get_byte_order(),
-                                        self.elf.data.addr_size)
+        return self.elf.create_extractor(io.BytesIO(bytes))
 
     def contains_vaddr_in_file(self, vaddr):
         return self.p_vaddr <= vaddr and vaddr < (self.p_vaddr + self.p_filesz)
@@ -1606,7 +1763,7 @@ def st_shndx_to_str(st_shndx):
         return 'SHN_COMMON'
     return '%i' % (st_shndx)
 
-class Symbol(object):
+class Symbol:
     def __init__(self, index, addr_size, data, strtab, elf, addr_mask):
         '''
         struct Elf32_Sym {
@@ -1757,7 +1914,7 @@ class Symbol(object):
             f.write('\n')
 
 
-class Dumper(object):
+class Dumper:
     def __init__(self, f, addr_size, name_width=None):
         self.f = f
         self.addr_size = addr_size
@@ -1772,35 +1929,35 @@ class Dumper(object):
     def hex(self, value=0, name=None):
         if name:
             self.name(name)
-        self.f.write('%#x' % value)
+        self.f.write('%#x' % (value))
         if name:
             self.f.write('\n')
 
     def hex8(self, value=0, name=None):
         if name:
             self.name(name)
-        self.f.write('%#2.2x' % value)
+        self.f.write('%#2.2x' % (value))
         if name:
             self.f.write('\n')
 
     def hex16(self, value=0, name=None):
         if name:
             self.name(name)
-        self.f.write('%#4.4x' % value)
+        self.f.write('%#4.4x' % (value))
         if name:
             self.f.write('\n')
 
     def hex32(self, value=0, name=None):
         if name:
             self.name(name)
-        self.f.write('%#8.8x' % value)
+        self.f.write('%#8.8x' % (value))
         if name:
             self.f.write('\n')
 
     def hex64(self, value=0, name=None):
         if name:
             self.name(name)
-        self.f.write('%#16.16x' % value)
+        self.f.write('%#16.16x' % (value))
         if name:
             self.f.write('\n')
 
@@ -1810,15 +1967,177 @@ class Dumper(object):
         else:
             self.hex64(value, name)
 
+    def c_string(self, value='', name=None):
+        if name:
+            self.name(name)
+        self.f.write('"%s"' % (value))
+        if name:
+            self.f.write('\n')
 
-class PRSTATUS(object):
+
+
+class NT_FILES:
+    '''Represents the NT_FILE array in a core file.'''
+    def __init__(self, count, page_size, nt_files):
+        self.count = count
+        self.page_size = page_size
+        self.nt_files = nt_files
+
+    @classmethod
+    def from_dict(cls, elf, d):
+        # Used when importing from a JSON file.
+        count = d['count']
+        page_size = d['page_size']
+        entries = d['entries']
+        nt_files = []
+        for entry in entries:
+            nt_file = NT_FILE.from_dict(elf, entry)
+            nt_files.append(nt_file)
+        return cls(count, page_size, nt_files)
+
+    @classmethod
+    def decode(cls, data):
+        count = data.get_address()
+        page_size = data.get_address()
+        nt_files = []
+        for i in range(count):
+            start = data.get_address()
+            end = data.get_address()
+            file_ofs = data.get_address()
+            nt_files.append(NT_FILE(start, end, file_ofs, None))
+        for i in range(count):
+            nt_files[i].path = data.get_c_string()
+        return cls(count, page_size, nt_files)
+
+    def encode(self, strm: FileEncode):
+        strm.put_address(self.count)
+        strm.put_address(self.page_size)
+        for nt_file in self.nt_files:
+            strm.put_address(nt_file.start)
+            strm.put_address(nt_file.end)
+            strm.put_address(nt_file.file_ofs)
+        for nt_file in self.nt_files:
+            strm.put_c_string(nt_file.path)
+
+    def dump(self, f=sys.stdout):
+        d = Dumper(f, 8)
+        d.address(name='count', value=self.count)
+        d.address(name='page_size', value=self.page_size)
+        f.write('Index Address Range                '
+                '             file_ofs           path\n')
+        f.write('===== ----------------------------------------- '
+                '------------------ '
+                '-------------------------------------\n')
+
+        for i, nt_file in enumerate(self.nt_files):
+            f.write('[%3u] ' % (i))
+            nt_file.dump(f)
+        f.write('\n')
+
+class PRPSINFO:
+    def __init__(self, pr_state=0, pr_sname=0, pr_zomb=0, pr_nice=0, pr_flag=0,
+                 pr_uid=0, pr_gid=0, pr_pid=0, pr_ppid=0, pr_pgrp=0, pr_sid=0,
+                 pr_fname='', pr_psargs='', addr_size=8):
+        self.pr_state = pr_state
+        self.pr_sname = pr_sname
+        self.pr_zomb = pr_zomb
+        self.pr_nice = pr_nice
+        self.pr_flag = pr_flag
+        self.pr_uid = pr_uid
+        self.pr_gid = pr_gid
+        self.pr_pid = pr_pid
+        self.pr_ppid = pr_ppid
+        self.pr_pgrp = pr_pgrp
+        self.pr_sid = pr_sid
+        self.pr_fname = pr_fname
+        self.pr_psargs = pr_psargs
+        self.addr_size = addr_size
+
+    @classmethod
+    def from_dict(cls, elf, d):
+        # Used when importing from a JSON file.
+        return cls(**d)
+
+    @classmethod
+    def decode(cls, data):
+        addr_size = data.get_addr_size()
+
+        pr_state = data.get_uint8()
+        pr_sname = data.get_uint8()
+        pr_zomb = data.get_uint8()
+        pr_nice = data.get_uint8()
+        if addr_size == 8:
+            data.align_to(8)
+        pr_flag = data.get_address();
+
+        # 16 bit on 32 bit platforms, 32 bit on 64 bit platforms
+        id_size = addr_size >> 1
+        pr_uid = data.get_uint_size(id_size, None)
+        pr_gid = data.get_uint_size(id_size, None)
+
+        pr_pid = data.get_uint32()
+        pr_ppid = data.get_uint32()
+        pr_pgrp = data.get_uint32()
+        pr_sid = data.get_uint32()
+
+        pr_fname = data.get_fixed_length_c_string(16)
+        pr_psargs = data.get_fixed_length_c_string(80)
+
+        return PRPSINFO(pr_state, pr_sname, pr_zomb, pr_nice, pr_flag, pr_uid,
+                        pr_gid, pr_pid, pr_ppid, pr_pgrp, pr_sid, pr_fname,
+                        pr_psargs, addr_size)
+
+    def encode(self, strm: FileEncode):
+        strm.put_uint8(self.pr_state)
+        strm.put_uint8(self.pr_sname)
+        strm.put_uint8(self.pr_zomb)
+        strm.put_uint8(self.pr_nice)
+        if self.addr_size == 8:
+            strm.align_to(8)
+        strm.put_address(self.pr_flag)
+
+        # 16 bit on 32 bit platforms, 32 bit on 64 bit platforms
+        id_size = self.addr_size >> 1
+        strm.put_uint_size(id_size, self.pr_uid)
+        strm.put_uint_size(id_size, self.pr_gid)
+
+        strm.put_uint32(self.pr_pid)
+        strm.put_uint32(self.pr_ppid)
+        strm.put_uint32(self.pr_pgrp)
+        strm.put_uint32(self.pr_sid)
+
+        strm.put_fixed_length_c_string(self.pr_fname, 16)
+        strm.put_fixed_length_c_string(self.pr_psargs, 80)
+
+    def dump(self, f=sys.stdout):
+        d = Dumper(f, self.addr_size)
+        d.hex8(name='pr_state', value=self.pr_state)
+        d.hex8(name='pr_sname', value=self.pr_sname)
+        d.hex8(name='pr_zomb', value=self.pr_zomb)
+        d.hex8(name='pr_nice', value=self.pr_nice)
+        d.address(name='pr_flag', value=self.pr_flag)
+        if self.addr_size == 4:
+            d.hex16(name='pr_uid', value=self.pr_uid)
+            d.hex16(name='pr_gid', value=self.pr_gid)
+        else:
+            d.hex32(name='pr_uid', value=self.pr_uid)
+            d.hex32(name='pr_gid', value=self.pr_gid)
+        d.hex32(name='pr_pid', value=self.pr_pid)
+        d.hex32(name='pr_ppid', value=self.pr_ppid)
+        d.hex32(name='pr_pgrp', value=self.pr_pgrp)
+        d.hex32(name='pr_sid', value=self.pr_sid)
+        d.c_string(name='pr_fname', value=self.pr_fname)
+        d.c_string(name='pr_psargs', value=self.pr_psargs)
+
+
+class PRSTATUS:
     def __init__(self, si_signo=0, si_code=0, si_errno=0, pr_cursig=0,
                  pr_sigpend=0, pr_sighold=0, pr_pid=0, pr_ppid=0, pr_pgrp=0,
                  pr_sid=0, pr_utime_tv_sec=0, pr_utime_tv_usec=0,
                  pr_stime_tv_sec=0, pr_stime_tv_usec=0,
                  pr_cutime_tv_sec=0, pr_cutime_tv_usec=0,
                  pr_cstime_tv_sec=0, pr_cstime_tv_usec=0,
-                 reg_data=None, addr_size=0):
+                 reg_data=None, addr_size=8):
         self.si_signo = si_signo
         self.si_code = si_code
         self.si_errno = si_errno
@@ -1839,6 +2158,17 @@ class PRSTATUS(object):
         self.pr_cstime_tv_usec = pr_cstime_tv_usec
         self.reg_data = reg_data
         self.addr_size = addr_size
+
+    @classmethod
+    def from_dict(cls, elf, d):
+        # Used when importing from a JSON file.
+
+        # Fix up the register data field, which can be stored as a hex string or
+        # a list of hex strings in the JSON file, so we need to convert it back
+        # to bytes.
+        d['reg_data'] = object_to_bytes(d['reg_data'])
+        return cls(**d)
+
 
     @classmethod
     def decode(cls, data):
@@ -1926,7 +2256,7 @@ NT_GNU_ABI_OS_SOLARIS = 2
 NT_GNU_BUILD_ID_TAG = 3
 
 
-class NT_FILE(object):
+class NT_FILE:
     '''Represents an entry in the NT_FILE array in a core file.'''
     def __init__(self, start, end, file_ofs, path):
         self.start = start
@@ -1934,16 +2264,52 @@ class NT_FILE(object):
         self.file_ofs = file_ofs
         self.path = path
 
+    @classmethod
+    def from_dict(cls, elf, d):
+        # Used when importing from a JSON file.
+        return cls(**d)
+
     def dump(self, f=sys.stdout):
         f.write('[0x%16.16x - 0x%16.16x) 0x%16.16x %s\n' %
                 (self.start, self.end, self.file_ofs, self.path))
 
-class Note(object):
+class Note:
     '''Respresents an ELF note'''
     def __init__(self, name, type, data):
         self.name = name
         self.type = type
         self.data = data
+
+    @classmethod
+    def from_dict(cls, elf, d):
+        note_name = d['name']
+        note_type = d['type']
+        note_class, note_type_enum = get_note_class_and_type(note_name, note_type)
+        note_content_class = note_class.get_content_class()
+        if note_class:
+            note_data = None
+            if 'content' in d:
+                if note_content_class is None:
+                    raise ValueError('note class %s does not have a content class' %
+                                     (note_class.__name__))
+                content = note_content_class.from_dict(elf, d['content'])
+                encoder = elf.create_encoder()
+                content.encode(encoder)
+                encoder.file.seek(0)
+                note_data = elf.create_extractor(encoder.file)
+            elif 'data' in d:
+                note_bytes = object_to_bytes(d['data'])
+                note_data = elf.create_extractor(io.BytesIO(note_bytes))
+            if note_data is None:
+                raise ValueError('note dictionary must have either "content" or "data"')
+            note = note_class(note_name, note_type_enum, note_data)
+            return note
+        raise ValueError('unhandled note type %s for note name %s' % (
+                         note_type_enum, note_name))
+
+    @classmethod
+    def get_content_class(cls):
+        return None
 
     def get_type_name(self):
         if self.name in ['CORE', 'LINUX']:
@@ -1952,7 +2318,7 @@ class Note(object):
             return ''
 
     @classmethod
-    def decode(cls, data):
+    def decode(cls, data: FileExtract):
         namesz = data.get_uint32()
         if namesz == 0:
             return None
@@ -1965,19 +2331,19 @@ class Note(object):
         note_data = data.read_data(descsz)
         return cls(note_name, note_type, note_data)
 
-    def encode(self, strm):
+    def encode(self, strm: FileEncode):
+        bytes = self.data.get_all_bytes()
         strm.put_uint32(len(self.name)+1)
-        strm.put_uint32(self.strm.get_size())
+        strm.put_uint32(len(bytes))
         strm.put_uint32(self.type)
         strm.put_c_string(self.name)
         strm.align_to(4)
-        # We are assuming the note "self.strm" is a BytesIO here...
-        strm.file.write(self.strm.file.getvalue())
+        strm.file.write(bytes)
         strm.align_to(4)
 
     @classmethod
     def create_core_prstatus_regs_arm(cls, reg_values):
-        strm = file_extract.FileEncode(io.BytesIO(), 'little', 4)
+        strm = FileEncode(io.BytesIO(), 'little', 4)
         for (i, reg_value) in enumerate(reg_values):
             if i < 19:
                 strm.put_uint32(reg_value)
@@ -1989,29 +2355,23 @@ class Note(object):
 
     @classmethod
     def create_core_prstatus(cls, elf, prstatus):
-        data = file_extract.FileEncode(io.BytesIO(),
-                                       elf.get_byte_order(),
-                                       elf.get_addr_size())
+        data = elf.create_encoder()
         prstatus.encode(data)
         return Note("CORE", NT.PRSTATUS,
-                    file_extract.FileExtract(
-                            io.BytesIO(data.file.getvalue()),
-                            data.get_byte_order(),
-                            data.get_addr_size()))
+                    elf.create_extractor(io.BytesIO(data.file.getvalue())))
 
     def dump_header(self, options, f=sys.stdout):
-        self.data.seek(0)
         f.write('\nname = "%s", type = %#8.8x%s, size = 0x%8.8x\n' % (self.name, self.type, self.get_type_name(), self.data.get_size()))
         # Dump the size and binary if verbose is enabled.
-        if options.verbose:
-            self.data.dump(num_per_line=options.num_per_line, f=f)
+        if options and options.verbose:
+            self.data.dump(num_per_line=options.num_per_line if options else 32, f=f)
 
     def dump(self, options, f=sys.stdout):
         self.data.seek(0)
         self.dump_header(options, f=f)
         # Bytes will have been dumped in dump_header if verbose is enabled.
-        if not options.verbose:
-            self.data.dump(num_per_line=options.num_per_line, f=f)
+        if options is None or not options.verbose:
+            self.data.dump(num_per_line=options.num_per_line if options else 32, f=f)
 
     @classmethod
     def extract_notes(cls, data):
@@ -2021,27 +2381,45 @@ class Note(object):
             note = Note.decode(data)
             if note is None or note.name is None or len(note.name) == 0:
                 break
-            if note.name == 'CORE' or note.name == 'LINUX':
-                if note.type == NT.FILE:
-                    notes.append(Note_NT_FILE(note.name, note.type, note.data))
-                    continue
-                elif note.type == NT.AUXV:
-                    notes.append(Note_NT_AUXV(note.name, note.type, note.data))
-                    continue
-                elif note.type == NT.PRSTATUS:
-                    notes.append(Note_NT_PRSTATUS(note.name, note.type, note.data))
-                    continue
-            notes.append(note)
+            # Find the appropriate class to use for this note based on its name
+            # and type, and create an instance of that class.
+            note_class, note_type_enum = get_note_class_and_type(note.name, note.type)
+            notes.append(note_class(note.name, note_type_enum, note.data))
         return notes
+
+class Note_NT_PRPSINFO(Note):
+    '''Represents an NT_PRPSINFO note in a core file.'''
+    def __init__(self, name, type, data):
+        super(Note_NT_PRPSINFO, self).__init__(name, type, data)
+        self.prpsinfo = None
+
+    @classmethod
+    def get_content_class(cls):
+        return PRPSINFO
+
+    def get_prpsinfo(self):
+        if self.prpsinfo is None:
+            self.prpsinfo = PRPSINFO.decode(self.data)
+        return self.prpsinfo
+
+    def dump(self, options, f=sys.stdout):
+        super().dump_header(options, f=f)
+        self.get_prpsinfo().dump(f=f)
+
 
 class Note_NT_PRSTATUS(Note):
     '''Represents an NT_PRSTATUS note in a core file.'''
-    def __init__(self, name, type, data):
+    def __init__(self, name, type, data, prstatus=None):
         super(Note_NT_PRSTATUS, self).__init__(name, type, data)
         self.prstatus = None
 
+    @classmethod
+    def get_content_class(cls):
+        return PRSTATUS
+
     def get_prstatus(self):
         if self.prstatus is None:
+            self.data.seek(0)
             self.prstatus = PRSTATUS.decode(self.data)
         return self.prstatus
 
@@ -2055,41 +2433,68 @@ class Note_NT_FILE(Note):
         super(Note_NT_FILE, self).__init__(name, type, data)
         self.nt_files = None
 
-    def get_entries(self):
+    @classmethod
+    def get_content_class(cls):
+        return NT_FILES
+
+    def get_entries(self) -> NT_FILES:
         if self.nt_files is None:
-            self.data.seek(0)
-            self.nt_files = []
-            self.count = self.data.get_address()
-            self.page_size = self.data.get_address()
-            for i in range(self.count):
-                start = self.data.get_address()
-                end = self.data.get_address()
-                file_ofs = self.data.get_address()
-                self.nt_files.append(NT_FILE(start, end, file_ofs, None))
-            for i in range(self.count):
-                self.nt_files[i].path = self.data.get_c_string()
+            self.nt_files = NT_FILES.decode(self.data)
         return self.nt_files
 
     def dump(self, options, f=sys.stdout):
         entries = self.get_entries()
         super().dump_header(options, f=f)
-        f.write('    count     = 0x%16.16x (%u)\n' % (self.count, self.count))
-        f.write('    page_size = 0x%16.16x (%u)\n' % (self.page_size,
-                                                      self.page_size))
-        f.write('    Index Address Range                '
-                '             file_ofs           path\n')
-        f.write('    ===== ----------------------------------------- '
-                '------------------ '
-                '-------------------------------------\n')
-        for i, nt_file in enumerate(entries):
-            f.write('    [%3u] ' % (i))
-            nt_file.dump(f=f)
-        f.write('\n')
+        self.get_entries().dump(f=f)
 
-class AuxvEntry(object):
+class AuxvEntry:
     def __init__(self, type, value):
         self.type = type
         self.value = value
+
+class AuxVector:
+    '''Represents the auxv array in a core file.'''
+    def __init__(self, entries):
+        self.entries = entries
+
+    @classmethod
+    def from_dict(cls, elf, d):
+        # Used when importing from a JSON file.
+        entries_dict = d['auxv']
+        entries = []
+        for at in entries_dict:
+            entry = AuxvEntry(AT.from_object(at),
+                              entries_dict[at])
+            entries.append(entry)
+        return cls(entries)
+
+    @classmethod
+    def decode(cls, data):
+        entries = []
+        while True:
+            _type = data.get_address(None)
+            if _type is None:
+                break
+            _value = data.get_address(None)
+            if _value is None:
+                break
+            entries.append(AuxvEntry(AT(_type), _value))
+            if _type == AT.NULL:
+                break
+        return cls(entries)
+
+    def encode(self, strm: FileEncode):
+        for entry in self.entries:
+            strm.put_address(entry.type)
+            strm.put_address(entry.value)
+
+    def dump(self, f=sys.stdout):
+        for entry in self.entries:
+            f.write('    %-*s = %#16.16x\n' % (AT.max_width(),
+                                               entry.type,
+                                               entry.value))
+        f.write('\n')
+
 
 class Note_NT_AUXV(Note):
     '''Represents an NT_AUXV note in a core file.'''
@@ -2097,33 +2502,45 @@ class Note_NT_AUXV(Note):
         super(Note_NT_AUXV, self).__init__(name, type, data)
         self.auxv_entries = None
 
+    @classmethod
+    def get_content_class(cls):
+        return AuxVector
+
     def get_entries(self):
         if self.auxv_entries is None:
-            self.auxv_entries = []
-            while True:
-                _type = self.data.get_address(None)
-                if _type is None:
-                    break
-                _value = self.data.get_address(0)
-                self.auxv_entries.append(AuxvEntry(AT(_type), _value))
+            self.auxv_entries = AuxVector.decode(self.data)
         return self.auxv_entries
 
     def dump(self, options, f=sys.stdout):
         entries = self.get_entries()
         super().dump_header(options, f=f)
-        for entry in entries:
-            if options.verbose:
-                f.write('    %#2.2x (%-*s) = %#16.16x\n' % (entry.type,
-                                                         AT.max_width(),
-                                                         entry.type,
-                                                         entry.value))
-            else:
-                f.write('    %-*s = %#16.16x\n' % (AT.max_width(),
-                                                   entry.type,
-                                                   entry.value))
+        self.get_entries().dump(f=f)
 
 
-class ELFDynamic(object):
+def get_note_type_enum(note_name, note_type):
+    '''Get the note IntEnum class to use for an ELF note with the given name and type.'''
+    if note_name == 'CORE' or note_name == 'LINUX':
+        return NT.from_object(note_type)
+    return note_type
+
+nt_type_to_class = {
+    NT.PRSTATUS: Note_NT_PRSTATUS,
+    NT.PRPSINFO: Note_NT_PRPSINFO,
+    NT.FILE: Note_NT_FILE,
+    NT.AUXV: Note_NT_AUXV,
+}
+
+def get_note_class_and_type(note_name, note_type):
+    '''Get the class and note type enum to use for an ELF note with the given name and type.'''
+    note_type_enum = get_note_type_enum(note_name, note_type)
+    if note_name == 'CORE' or note_name == 'LINUX':
+        cls = nt_type_to_class.get(note_type_enum)
+        if cls is not None:
+            return (cls, note_type_enum)
+    return (Note, note_type_enum)
+
+
+class ELFDynamic:
     '''Represents and dynamic entry in the SHT_DYNAMIC section.'''
     def __init__(self, index, data):
         self.index = index
@@ -2152,7 +2569,7 @@ class ELFDynamic(object):
             f.write('\n')
 
 
-class StringTable(object):
+class StringTable:
     '''Represents and SHT_STRTAB string table'''
     def __init__(self, data):
         self.data = data
@@ -2184,7 +2601,7 @@ def djb_hash(s):
     return h & 0xffffffff
 
 
-class GNUHash(object):
+class GNUHash:
     def __init__(self, elf):
         self.elf = elf
         self.section = elf.get_section_by_dynamic_tag(DT.GNU_HASH)
@@ -2266,7 +2683,7 @@ def prel31_to_addr(prel31):
     return (value & (sign_bit - 1)) - (value & sign_bit)
 
 
-class ARMUnwind(object):
+class ARMUnwind:
     def __init__(self, elf):
         self.elf = elf
         self.exidx = []
@@ -2291,7 +2708,7 @@ class ARMUnwind(object):
         for entry in self.exidx:
             func_info.add(entry.func_addr, source='.ARM.exidx')
 
-    class Entry(object):
+    class Entry:
         def __init__(self, file_addr, func_addr, data):
             self.file_addr = file_addr
             self.func_addr = func_addr
@@ -2301,7 +2718,7 @@ class ARMUnwind(object):
             return self.func_addr < rhs.func_addr
 
 
-class Hash(object):
+class Hash:
     def __init__(self, elf):
         self.elf = elf
         self.section = elf.get_section_by_dynamic_tag(DT.HASH)
@@ -2435,7 +2852,7 @@ def calculate_symbol_checks(elf, sym_tree, symbols):
         # print('')
 
 
-class File(object):
+class File:
     '''Represents and ELF file'''
     def __init__(self, path=None, header=None, data=None):
         self.path = path
@@ -2452,7 +2869,7 @@ class File(object):
         elif path is not None:
             if os.path.exists(path):
                 f = open(self.path, 'rb')
-                self.data = file_extract.FileExtract(f, '=')
+                self.data = FileExtract(f, '=')
                 self.header = Header.decode(self)
                 if self.header is None:
                     self.data = None
@@ -2502,6 +2919,30 @@ class File(object):
         if ph:
             return ph.p_vaddr
         return None
+
+    def create_extractor(self, file) -> FileExtract:
+        '''
+        Create and return a FileExtract() object that can be used to read the
+        contents of this ELF file with the same byte order and address size as
+        this ELF file.
+        '''
+        return FileExtract(file,
+                           byte_order=self.get_byte_order(),
+                           addr_size=self.get_addr_size(),
+                           offset_size=self.get_addr_size())
+
+    def create_encoder(self, file=None) -> FileEncode:
+        '''
+        Create and return a FileEncode() object that can be used to write out a
+        new ELF data with the same byte order and address size as this ELF
+        file.
+        '''
+        if file is None:
+            file = io.BytesIO()
+        return FileEncode(file,
+                          byte_order=self.get_byte_order(),
+                          addr_size=self.get_addr_size(),
+                          offset_size=self.get_addr_size())
 
     def get_notes(self):
         if self.notes is not None:
@@ -2588,9 +3029,7 @@ class File(object):
     def add_notes_program_header(self, note):
         if self.program_headers is None:
             self.program_headers = []
-        ph_encoder = file_extract.FileEncode(io.BytesIO(),
-                                             self.get_byte_order(),
-                                             self.get_addr_size())
+        ph_encoder = self.create_encoder()
         note.encode(ph_encoder)
         ph = ProgramHeader(elf=self,
                            index=len(self.program_headers),
@@ -2616,9 +3055,7 @@ class File(object):
                 ph.p_filesz = len(ph.data)
                 offset += ph.p_filesz
         with open(path, 'wb') as out_file:
-            data = file_extract.FileEncode(out_file,
-                                           self.get_byte_order(),
-                                           self.get_addr_size())
+            data = self.create_encoder(out_file)
             self.header.encode(data)
             curr_offset = data.tell()
             if self.header.e_phoff != curr_offset:
@@ -2644,9 +3081,7 @@ class File(object):
         in the sect_bytes_dict. It uses "orig_elf" as the template ELF file for
         creating the new output ELF file.'''
         out_file = open(out_path, 'w')
-        strm = file_extract.FileEncode(out_file,
-                                       orig_elf.data.get_byte_order(),
-                                       orig_elf.data.get_addr_size())
+        strm = orig_elf.create_encoder(out_file)
         sorted_section_names = sorted(sect_bytes_dict.keys())
         # We need one section for each section data + the section header
         # string table + the first SHT_NULL section
@@ -2679,7 +3114,7 @@ class File(object):
             shstrtab.insert(sect_name)
 
         # Encode the shstrtab data so we know how big it is
-        shstrtab_data = file_extract.FileEncode(io.BytesIO())
+        shstrtab_data = orig_elf.create_encoder()
         shstrtab.encode(shstrtab_data)
         shstrtab_bytes = shstrtab_data.file.getvalue()
         # Write out section headers
@@ -3111,6 +3546,28 @@ class File(object):
     def is_arm(self):
         return self.header.is_arm()
 
+    def encode_yaml(self, f):
+        self.header.encode_yaml(f)
+        f.write('ProgramHeaders:\n')
+        headers = self.get_program_headers()
+        for ph in headers:
+            ph.encode_yaml(f)
+        f.write('Sections:\n')
+        sections = self.get_section_headers()
+        real_sections_added = False
+        if sections:
+            for section in sections:
+                pass # section.encode_yaml(f)
+        else:
+            # No sections, but program headers can contain data which we can
+            # use Fake sections to represent the data in the program headers.
+            for ph in headers:
+                ph.encode_yaml_section_data(f)
+
+        if not real_sections_added:
+            f.write('  - Type:            SectionHeaderTable\n')
+            f.write('    NoHeaders:       true\n')
+
     def dump(self, options, f=sys.stdout):
         if not options.api:
             self.dump_file_summary(f=f)
@@ -3185,20 +3642,14 @@ class File(object):
                     uuid_bytes = binascii.unhexlify(uuid_hex_only)
                     # Create a note for the GNU build ID
                     note = Note("GNU", NT.GNU_BUILD_ID_TAG,
-                                file_extract.FileExtract(
-                                        io.BytesIO(uuid_bytes),
-                                        self.data.get_byte_order(),
-                                        self.data.get_addr_size()))
+                                self.create_extractor(io.BytesIO(uuid_bytes)))
                     # Make a temp file and encode the above note object into
                     # the file so we can use objcopy to insert the note into
                     # it
                     gnu_build_id_path = None
                     with tempfile.NamedTemporaryFile(delete=False) as f:
                         gnu_build_id_path = f.name
-                        encoder = file_extract.FileEncode(
-                                f,
-                                self.data.get_byte_order(),
-                                self.data.addr_size)
+                        encoder = self.create_encoder(f)
                         note.encode(encoder)
                     # If all went well lets add the note to the ELF file.
                     if gnu_build_id_path:
@@ -3379,6 +3830,9 @@ class File(object):
                 api_dict = self.get_api_info()
                 f.write(json.dumps(api_dict, indent=2, ensure_ascii=False))
                 f.write('\n')
+            if options.yaml:
+                with open(options.yaml, 'w') as f:
+                    self.encode_yaml(f)
             if options.func_ranges:
                 func_info = FunctionInfo()
                 # Get symbols from symbol table
@@ -3590,6 +4044,8 @@ def user_specified_options(options):
     if dwarf.options.have_dwarf_options(options):
         return True
     if len(options.hash_lookups) > 0:
+        return True
+    if options.yaml:
         return True
     if options.func_ranges:
         return True
@@ -4022,6 +4478,13 @@ def main():
               'table (DT_FINI_ARRAY and DT_INIT_ARRAY), symbol table, dynamic '
               'symbol table, and PLT entries.'),
         default=False)
+    parser.add_option(
+        '--yaml',
+        type='string',
+        dest='yaml',
+        default=None,
+        help='Convert the input ELF file to a YAML representation in the specified file.')
+
     parser.add_option(
         '--compare',
         action='store_true',

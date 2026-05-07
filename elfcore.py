@@ -84,7 +84,8 @@ def main():
         elf.ProgramHeader.dump_header()
     for ph in core_elf.get_program_headers():
         if ph.p_type == elf.PT.NOTE:
-            min_core_elf.add_program_header(ph)
+            # min_core_elf.add_program_header(ph)
+            pass
         elif ph.p_type == elf.PT.LOAD:
             if options.addresses:
                 for addr in options.addresses:
@@ -110,7 +111,7 @@ def main():
             elf_json = json.load(f)
             program_headers_json = elf_json.get('program_headers', [])
             for ph_dict in program_headers_json:
-                ph = elf.ProgramHeader.from_dict(ph_dict)
+                ph = elf.ProgramHeader.from_dict(min_core_elf, ph_dict)
                 if ph is not None:
                     ph.elf = min_core_elf
                     min_core_elf.add_program_header(ph)
