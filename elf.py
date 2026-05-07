@@ -561,9 +561,30 @@ class NT(IntEnum):
     PPC_VMX = 0x100
     PPC_SPE = 0x101
     PPC_VSX = 0x102
+    PPC_TAR = 0x103
+    PPC_PPR	= 0x104
+    PPC_DSCR = 0x105
+    PPC_EBB = 0x106
+    PPC_PMU = 0x107
+    PPC_TM_CGPR = 0x108
+    PPC_TM_CFPR = 0x109
+    PPC_TM_CVMX = 0x10a
+    PPC_TM_CVSX = 0x10b
+    PPC_TM_SPR = 0x10c
+    PPC_TM_CTAR = 0x10d
+    PPC_TM_CPPR = 0x10e
+    PPC_TM_CDSCR = 0x10f
+    PPC_PKEY = 0x110
+    PPC_DEXCR = 0x111
+    PPC_HASHKEYR = 0x112
+
     _386_TLS = 0x200
     _386_IOPERM = 0x201
     X86_XSTATE = 0x202
+    CET_STATE = 0x203  # Old binutils treats 0x203 as a CET state
+    X86_SHSTK = 0x204
+    X86_XSAVE_LAYOUT = 0x205
+
     S390_HIGH_GPRS = 0x300
     S390_TIMER = 0x301
     S390_TODCMP = 0x302
@@ -575,14 +596,53 @@ class NT(IntEnum):
     S390_TDB = 0x308
     S390_VXRS_LOW = 0x309
     S390_VXRS_HIGH = 0x30a
+    S390_GS_CB = 0x30b
+    S390_GS_BC = 0x30c
+    S390_RI_CB = 0x30d
+    S390_PV_CPU_DATA = 0x30e
+
     ARM_VFP = 0x400
     ARM_TLS = 0x401
     ARM_HW_BREAK = 0x402
     ARM_HW_WATCH = 0x403
     ARM_SYSTEM_CALL = 0x404
+    ARM_SVE	= 0x405
+    ARM_PAC_MASK = 0x406
+    ARM_PACA_KEYS = 0x407
+    ARM_PACG_KEYS = 0x408
+    ARM_TAGGED_ADDR_CTRL = 0x409
+    ARM_PAC_ENABLED_KEYS = 0x40a
+    ARM_SSVE = 0x40b
+    ARM_ZA = 0x40c
+    ARM_ZT = 0x40d
+    ARM_FPMR = 0x40e
+    ARM_POE = 0x40f
+    ARM_GCS = 0x410
+
     METAG_CBUF = 0x500
     METAG_RPIPE = 0x501
     METAG_TLS = 0x502
+
+    ARC_V2 = 0x600
+
+    VMCOREDD = 0x700
+
+    MIPS_DSP = 0x800
+    MIPS_FP_MODE = 0x801
+    MIPS_MSA = 0x802
+
+    RISCV_CSR = 0x900
+    RISCV_VECTOR = 0x901
+    RISCV_TAGGED_ADDR_CTRL = 0x902
+    RISCV_USER_CFI = 0x903
+
+    LOONGARCH_CPUCFG = 0xa00
+    LOONGARCH_CSR = 0xa01
+    LOONGARCH_LSX = 0xa02
+    LOONGARCH_LASX = 0xa03
+    LOONGARCH_LBT = 0xa04
+    LOONGARCH_HW_BREAK = 0xa05
+    LOONGARCH_HW_WATCH = 0xa06
 
     @classmethod
     def from_object(cls, value):
