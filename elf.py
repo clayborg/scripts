@@ -615,7 +615,6 @@ class NT(IntEnum):
 
     @classmethod
     def create_pseudo_member_(cls, value):
-        print("AT.create_pseudo_member for", value)
         pseudo_member = cls._value2member_map_.get(value, None)
         if pseudo_member is None:
             new_member = int.__new__(cls, value)
@@ -703,7 +702,6 @@ class AT(IntEnum):
 
     @classmethod
     def create_pseudo_member_(cls, value):
-        print("AT.create_pseudo_member for", value)
         pseudo_member = cls._value2member_map_.get(value, None)
         if pseudo_member is None:
             new_member = int.__new__(cls, value)
