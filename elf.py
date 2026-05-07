@@ -2366,7 +2366,7 @@ class Note:
         if options and options.verbose:
             self.data.dump(num_per_line=options.num_per_line if options else 32, f=f)
 
-    def dump(self, options, f=sys.stdout):
+    def dump(self, options, f=sys.stdout, elf=None):
         self.data.seek(0)
         self.dump_header(options, f=f)
         # Bytes will have been dumped in dump_header if verbose is enabled.
@@ -2402,7 +2402,7 @@ class Note_NT_PRPSINFO(Note):
             self.prpsinfo = PRPSINFO.decode(self.data)
         return self.prpsinfo
 
-    def dump(self, options, f=sys.stdout):
+    def dump(self, options, f=sys.stdout, elf=None):
         super().dump_header(options, f=f)
         self.get_prpsinfo().dump(f=f)
 
@@ -2423,7 +2423,7 @@ class Note_NT_PRSTATUS(Note):
             self.prstatus = PRSTATUS.decode(self.data)
         return self.prstatus
 
-    def dump(self, options, f=sys.stdout):
+    def dump(self, options, f=sys.stdout, elf=None):
         super().dump_header(options, f=f)
         self.get_prstatus().dump(f=f)
 
@@ -2442,7 +2442,7 @@ class Note_NT_FILE(Note):
             self.nt_files = NT_FILES.decode(self.data)
         return self.nt_files
 
-    def dump(self, options, f=sys.stdout):
+    def dump(self, options, f=sys.stdout, elf=None):
         entries = self.get_entries()
         super().dump_header(options, f=f)
         self.get_entries().dump(f=f)
@@ -2488,11 +2488,20 @@ class AuxVector:
             strm.put_address(entry.type)
             strm.put_address(entry.value)
 
-    def dump(self, f=sys.stdout):
+    def dump(self, f=sys.stdout, elf=None):
         for entry in self.entries:
-            f.write('    %-*s = %#16.16x\n' % (AT.max_width(),
-                                               entry.type,
-                                               entry.value))
+            str = None
+            if elf:
+                if entry.type in [AT.EXECFN, AT.PLATFORM, AT.BASE_PLATFORM]:
+                    str = elf.read_memory_as_c_string(entry.value)
+            if str:
+                f.write('    %-*s = %#16.16x "%s"\n' % (AT.max_width(),
+                                                        entry.type,
+                                                        entry.value, str))
+            else:
+                f.write('    %-*s = %#16.16x\n' % (AT.max_width(),
+                                                   entry.type,
+                                                   entry.value))
         f.write('\n')
 
 
@@ -2511,10 +2520,10 @@ class Note_NT_AUXV(Note):
             self.auxv_entries = AuxVector.decode(self.data)
         return self.auxv_entries
 
-    def dump(self, options, f=sys.stdout):
+    def dump(self, options, f=sys.stdout, elf=None):
         entries = self.get_entries()
         super().dump_header(options, f=f)
-        self.get_entries().dump(f=f)
+        self.get_entries().dump(f=f, elf=elf)
 
 
 def get_note_type_enum(note_name, note_type):
@@ -3355,6 +3364,10 @@ class File:
         return None
 
     def get_program_header_by_type(self, p_type, start_idx=0) -> ProgramHeader | None:
+        '''
+        Find the first program header with the specified type starting at the
+        specified index.
+        '''
         program_headers = self.get_program_headers()
         count = len(program_headers)
         if start_idx < count:
@@ -3363,7 +3376,70 @@ class File:
                     return program_headers[i]
         return None
 
-    def find_matching_program_header(self, other_phdr) -> ProgramHeader | None:
+    def read_memory_as_data(self, addr, size) -> FileExtract | None:
+        '''
+        Read the memory as bytes at the specified address and return it as a
+        bytes FileExtract from a program header vaddr.
+        '''
+        if self.data is None:
+            return None
+        for ph in self.get_program_headers_by_type(PT.LOAD):
+            if ph.contains_vaddr_in_file(addr):
+                offset = addr - ph.p_vaddr
+                bytes_left = ph.p_filesz - offset
+                if bytes_left <= 0:
+                    return None
+                if size > bytes_left:
+                    size = bytes_left
+                file_offset = offset + ph.p_offset
+                self.data.push_offset_and_seek(file_offset)
+                data = self.data.read_data(size)
+                self.data.pop_offset_and_seek()
+                return data
+        return None
+
+    def read_memory_as_bytes(self, addr, size) -> bytes | None:
+        '''
+        Read the memory as bytes at the specified address and return it as a
+        bytes object from a program header vaddr.
+        '''
+        if self.data is None:
+            return None
+        for ph in self.get_program_headers_by_type(PT.LOAD):
+            if ph.contains_vaddr_in_file(addr):
+                offset = addr - ph.p_vaddr
+                bytes_left = ph.p_filesz - offset
+                if bytes_left <= 0:
+                    return None
+                if size > bytes_left:
+                    size = bytes_left
+                file_offset = offset + ph.p_offset
+                self.data.push_offset_and_seek(file_offset)
+                bytes = self.data.read_size(size)
+                self.data.pop_offset_and_seek()
+                return bytes
+        return None
+
+    def read_memory_as_c_string(self, addr):
+        '''
+        Read a null-terminated C string from memory at the specified address
+        from a program header vaddr.
+        '''
+
+        if self.data is None:
+            return None
+        for ph in self.get_program_headers_by_type(PT.LOAD):
+            if ph.contains_vaddr_in_file(addr):
+                offset = addr - ph.p_vaddr
+                file_offset = offset + ph.p_offset
+                self.data.push_offset_and_seek(file_offset)
+                s = self.data.get_c_string()
+                self.data.pop_offset_and_seek()
+                return s
+        return None
+
+
+    def find_matching_program_header(self, other_phdr: ProgramHeader) -> ProgramHeader | None:
         phdrs = self.get_program_headers()
         for phdr in phdrs:
             if phdr.p_type != other_phdr.p_type:
@@ -3529,7 +3605,7 @@ class File:
                             notes = Note.extract_notes(
                                     ph.get_contents_as_extractor())
                             for note in notes:
-                                note.dump(options, f=f)
+                                note.dump(options, f=f, elf=self)
                         else:
                             file_extract.dump_memory(ph.p_vaddr, contents,
                                                      options.num_per_line, f)
@@ -3785,13 +3861,13 @@ class File:
             if options.dump_auxv:
                 note = self.get_note(['CORE', 'LINUX'], NT.AUXV)
                 if note:
-                    note.dump(options)
+                    note.dump(options, elf=self)
                 else:
                     print('error: no NT_AUXV found in notes')
             if options.dump_nt_file:
                 note = self.get_note(['CORE', 'LINUX'], NT.FILE)
                 if note:
-                    note.dump(options)
+                    note.dump(options, elf=self)
                 else:
                     print('error: no NT_FILE found in notes')
             if options.dump_dynamic:
