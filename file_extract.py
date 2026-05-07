@@ -506,13 +506,13 @@ class FileExtract:
                                gnu_funcrel=funcrel)
         return None
 
-    def read_size(self, byte_size):
+    def read_size(self, byte_size) -> bytes | None:
         s = self.file.read(byte_size)
         if len(s) != byte_size:
             return None
         return s
 
-    def get_all_bytes(self):
+    def get_all_bytes(self) -> bytes | None:
         save_pos = self.file.tell()
         self.file.seek(0, SEEK_END)
         len = self.file.tell()
