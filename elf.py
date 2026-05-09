@@ -10,6 +10,7 @@ import io
 import subprocess
 import sys
 import tempfile
+import uuid
 import zlib
 
 # Local imports
@@ -548,8 +549,8 @@ class PF(IntEnum):
         return 'PF_' + self.name
 
 
-# Note types
-class NT(IntEnum):
+# Note types for "LINUX" or "CORE" notes
+class NT_LINUX(IntEnum):
     PRSTATUS = 1
     PRFPREG = 2
     PRPSINFO = 3
@@ -664,6 +665,50 @@ class NT(IntEnum):
             return 'NT' + self.name
         else:
             return 'NT_' + self.name
+
+    # We might parse DWARF with user defined attributes. We need to support
+    # displaying these unknown attributes.
+    @classmethod
+    def _missing_(cls, value):
+        if isinstance(value, int):
+            return cls.create_pseudo_member_(value)
+        return None # will raise the ValueError in Enum.__new__
+
+    @classmethod
+    def create_pseudo_member_(cls, value):
+        pseudo_member = cls._value2member_map_.get(value, None)
+        if pseudo_member is None:
+            new_member = int.__new__(cls, value)
+            new_member._name_ = '%#8.8x' % value
+            new_member._value_ = value
+            pseudo_member = cls._value2member_map_.setdefault(value, new_member)
+        return pseudo_member
+
+# Note types for "GNU" notes
+class NT_GNU(IntEnum):
+    ABI_TAG = 1
+    HWCAP = 2
+    BUILD_ID = 3
+    GOLD_VERSION = 4
+    PROPERTY_TYPE_0 = 5
+
+    @classmethod
+    def from_object(cls, value):
+        # construct the NT enum value from the given object. The object can be
+        # an int or a string. If it's a string, it can optionally start with
+        # 'NT_GNU_'.
+        if isinstance(value, int):
+            return cls(value)
+        elif isinstance(value, str):
+            if value.startswith('NT_GNU_'):
+                value = value[3:]
+            return cls[value]
+        elif isinstance(value, cls):
+            return value
+        raise ValueError('Invalid value type: %s. Must be int, str, or %s instance.' % (type(value), cls.__name__))
+
+    def __str__(self):
+        return 'NT_GNU_' + self.name
 
     # We might parse DWARF with user defined attributes. We need to support
     # displaying these unknown attributes.
@@ -1757,8 +1802,13 @@ class ProgramHeader:
 
     def get_contents(self):
         '''Get the program header contents as a bytes'''
+        elf = self.elf
+        if elf.memory_addr is not None:
+            load_bias = elf.memory_addr - elf.get_base_address()
+            data_addr = self.p_vaddr + load_bias
+            return elf.core_elf.read_memory_as_bytes(data_addr, self.p_memsz)
         if self.p_filesz > 0 and self.p_offset > 0:
-            data = self.elf.data
+            data = elf.data
             if data:
                 data.push_offset_and_seek(self.p_offset)
                 bytes = data.read_size(self.p_filesz)
@@ -2052,13 +2102,29 @@ class Dumper:
             self.f.write('\n')
 
 
+class NT_FILE:
+    '''Represents an entry in the NT_FILE array in a core file.'''
+    def __init__(self, start, end, file_ofs, path):
+        self.start = start
+        self.end = end
+        self.file_ofs = file_ofs
+        self.path = path
+
+    @classmethod
+    def from_dict(cls, elf, d):
+        # Used when importing from a JSON file.
+        return cls(**d)
+
+    def dump(self, f=sys.stdout):
+        f.write('[0x%16.16x - 0x%16.16x) 0x%16.16x %s\n' %
+                (self.start, self.end, self.file_ofs, self.path))
 
 class NT_FILES:
     '''Represents the NT_FILE array in a core file.'''
     def __init__(self, count, page_size, nt_files):
         self.count = count
         self.page_size = page_size
-        self.nt_files = nt_files
+        self.nt_files: list[NT_FILE] = nt_files
 
     @classmethod
     def from_dict(cls, elf, d):
@@ -2110,6 +2176,40 @@ class NT_FILES:
             f.write('[%3u] ' % (i))
             nt_file.dump(f)
         f.write('\n')
+
+    def get_entry_containing_address(self, addr) -> None | NT_FILE:
+        for nt_file in self.nt_files:
+            if nt_file.start <= addr and addr < nt_file.end:
+                return nt_file
+        return None
+
+    def get_end_address_of_consecutive_ranges(self, other_nt_file: NT_FILE):
+        n = len(self.nt_files)
+        for i, nt_file in enumerate(self.nt_files):
+            if nt_file.start == other_nt_file.start:
+                while i + 1 < n:
+                    curr = self.nt_files[i]
+                    next = self.nt_files[i+1]
+                    if curr.path != next.path:
+                        break
+                    if curr.end != next.start:
+                        break
+                    i += 1
+                return self.nt_files[i].end
+
+    def get_elf_header_entry(self, elf):
+        # Get the address in the memory where the ELF header is.
+
+        # First try the program header address of the main exectuble
+        auxv_note = elf.get_note(['CORE', 'LINUX'], NT_LINUX.AUXV)
+        addr = auxv_note.get(AT.PHDR)
+        if addr is None:
+            # Fall back to the entry point address
+            addr = auxv_note.get(AT.ENTRY)
+        if addr is None:
+            return None
+        return self.get_entry_containing_address(addr)
+
 
 class PRPSINFO:
     def __init__(self, pr_state=0, pr_sname=0, pr_zomb=0, pr_nice=0, pr_flag=0,
@@ -2332,24 +2432,6 @@ NT_GNU_ABI_OS_HURD = 1
 NT_GNU_ABI_OS_SOLARIS = 2
 NT_GNU_BUILD_ID_TAG = 3
 
-
-class NT_FILE:
-    '''Represents an entry in the NT_FILE array in a core file.'''
-    def __init__(self, start, end, file_ofs, path):
-        self.start = start
-        self.end = end
-        self.file_ofs = file_ofs
-        self.path = path
-
-    @classmethod
-    def from_dict(cls, elf, d):
-        # Used when importing from a JSON file.
-        return cls(**d)
-
-    def dump(self, f=sys.stdout):
-        f.write('[0x%16.16x - 0x%16.16x) 0x%16.16x %s\n' %
-                (self.start, self.end, self.file_ofs, self.path))
-
 class Note:
     '''Respresents an ELF note'''
     def __init__(self, name, type, data):
@@ -2390,7 +2472,7 @@ class Note:
 
     def get_type_name(self):
         if self.name in ['CORE', 'LINUX']:
-            return f' ({NT(self.type)})'
+            return f' ({NT_LINUX(self.type)})'
         else:
             return ''
 
@@ -2434,7 +2516,7 @@ class Note:
     def create_core_prstatus(cls, elf, prstatus):
         data = elf.create_encoder()
         prstatus.encode(data)
-        return Note("CORE", NT.PRSTATUS,
+        return Note("CORE", NT_LINUX.PRSTATUS,
                     elf.create_extractor(io.BytesIO(data.file.getvalue())))
 
     def dump_header(self, options, f=sys.stdout):
@@ -2597,23 +2679,169 @@ class Note_NT_AUXV(Note):
             self.auxv_entries = AuxVector.decode(self.data)
         return self.auxv_entries
 
+    def get(self, key) -> None | int:
+        for entry in self.get_entries().entries:
+            if entry.type == key:
+                return entry.value
+        return None
+
     def dump(self, options, f=sys.stdout, elf=None):
         entries = self.get_entries()
         super().dump_header(options, f=f)
         self.get_entries().dump(f=f, elf=elf)
 
+class RT(IntEnum):
+    CONSISTENT = 0  # Mapping change is complete.
+    ADD = 1  # Beginning to add a new object.
+    DELETE = 2  # Beginning to remove an object mapping.
+
+    def __str__(self):
+        return 'RT_' + self.name
+
+class RMAP:
+    '''
+    A class the represents a "link_map" struct for the dynamic loader on linux.
+
+    struct link_map {
+      void *base_addr;
+      const char *path;
+      void *dyn_addr;
+      struct link_map *next;
+      struct link_map *prev;
+    };
+    '''
+    def __init__(self, base_addr, path_ptr, path, dyn_addr, next, prev):
+        self.base_addr = base_addr
+        self.path_ptr = path_ptr
+        self.path = path
+        self.dyn_addr = dyn_addr
+        self.next = next
+        self.prev = prev
+        self.uuid = None
+
+    def dump(self, options, f=sys.stdout):
+        if options.verbose:
+            f.write('%#16.16x %#16.16x %#16.16x %#16.16x %#16.16x %-45s %s\n' % (self.base_addr, self.path_ptr, self.dyn_addr, self.next, self.prev, self.get_uuid_str(), self.path))
+        else:
+            f.write('%#16.16x %-45s %s\n' % (self.base_addr, self.get_uuid_str(), self.path))
+
+    def get_uuid_str(self):
+        if self.uuid:
+            s = self.uuid.hex().upper()
+            n = len(self.uuid)
+            if n == 20:
+                return s[0:8] + '-' + s[8:12] + '-' + s[12:16] +  '-' + s[16:20] +  '-' + s[20:32] +  '-' + s[32:40]
+
+        return ''
+
+    @staticmethod
+    def dump_header(options, f=sys.stdout):
+        if options.verbose:
+            f.write('base_addr          path               dyn_addr           next               prev               UUID                                          Path\n')
+            f.write('------------------ ------------------ ------------------ ------------------ ------------------ ============================================= =================================\n')
+        else:
+            f.write('Load Address       UUID                                          Path\n')
+            f.write('------------------ --------------------------------------------- -------------------------------------\n')
+
+    @classmethod
+    def decode(cls, addr, core_elf):
+        data: FileExtract = core_elf.read_memory_as_data(addr, 48)
+        if data is None:
+            return None
+
+        base_addr = data.get_address()
+        path_ptr = data.get_address()
+        path = core_elf.read_memory_as_c_string(path_ptr)
+        dyn_addr = data.get_address()
+        next = data.get_address()
+        prev = data.get_address()
+
+        return cls(base_addr, path_ptr, path, dyn_addr, next, prev)
+
+class RDEBUG:
+    '''
+    A class that represents the DT_DEBUG linked list of shared libraries in a
+    linux process.
+
+    struct r_debug {
+        int r_version; /* Version number for this protocol.  */
+        struct link_map *r_map; /* Head of the chain of loaded objects.  */
+        void *r_brk;
+        enum {
+        /* This state value describes the mapping change taking place when
+            the `r_brk' address is called.  */
+        RT_CONSISTENT, /* Mapping change is complete.  */
+        RT_ADD,        /* Beginning to add a new object.  */
+        RT_DELETE,     /* Beginning to remove an object mapping.  */
+        } r_state;
+        void *r_ldbase;  /* Base address the linker is loaded at.  */
+    };
+    '''
+    def __init__(self, addr, r_version, r_map, r_brk, r_state, r_ldbase, rmaps):
+        self.addr = addr
+        self.r_version = r_version
+        self.r_map = r_map
+        self.r_brk = r_brk
+        self.r_state = r_state
+        self.r_ldbase = r_ldbase
+        self.rmaps = rmaps
+
+    def dump(self, options, f=sys.stdout):
+        f.write('Program executable and libraries in core file:\n')
+        if options.verbose:
+            f.write('_r_debug @ %#x:\n' % (self.addr))
+            f.write('  r_version = %u\n' % (self.r_version))
+            f.write('  r_map     = %#16.16x\n' % (self.r_map))
+            f.write('  r_brk     = %#16.16x\n' % (self.r_brk))
+            f.write('  r_state   = %s\n' % (RT(self.r_state)))
+            f.write('  r_ldbase  = %#16.16x\n' % (self.r_ldbase))
+            f.write('\n')
+        RMAP.dump_header(options, f=f)
+        for rmap in self.rmaps:
+            rmap.dump(options, f=f)
+
+    @classmethod
+    def decode(cls, addr, core_elf, exe_path):
+        data: FileExtract = core_elf.read_memory_as_data(addr, 40)
+        if data is None:
+            return None
+        r_version = data.get_uint32()
+        data.align_to(data.get_addr_size())
+        r_map = data.get_address()
+        r_brk = data.get_address()
+        r_state = data.get_uint32()
+        data.align_to(data.get_addr_size())
+        r_ldbase = data.get_address()
+
+        maps = []
+        map_ptr = r_map
+        while True:
+            rmap = RMAP.decode(map_ptr, core_elf)
+            if rmap is None:
+                break
+            if not rmap.path:
+                rmap.path = exe_path
+            rmap_elf = core_elf.get_elf_from_core_memory(rmap.path, rmap.base_addr)
+            if rmap_elf:
+                gnu_build_id = rmap_elf.get_gnu_build_id()
+                if gnu_build_id:
+                    rmap.uuid = gnu_build_id
+            maps.append(rmap)
+            map_ptr = rmap.next
+        return cls(addr, r_version, r_map, r_brk, r_state, r_ldbase, maps)
+
 
 def get_note_type_enum(note_name, note_type):
     '''Get the note IntEnum class to use for an ELF note with the given name and type.'''
     if note_name == 'CORE' or note_name == 'LINUX':
-        return NT.from_object(note_type)
+        return NT_LINUX.from_object(note_type)
     return note_type
 
 nt_type_to_class = {
-    NT.PRSTATUS: Note_NT_PRSTATUS,
-    NT.PRPSINFO: Note_NT_PRPSINFO,
-    NT.FILE: Note_NT_FILE,
-    NT.AUXV: Note_NT_AUXV,
+    NT_LINUX.PRSTATUS: Note_NT_PRSTATUS,
+    NT_LINUX.PRPSINFO: Note_NT_PRPSINFO,
+    NT_LINUX.FILE: Note_NT_FILE,
+    NT_LINUX.AUXV: Note_NT_AUXV,
 }
 
 def get_note_class_and_type(note_name, note_type):
@@ -2940,11 +3168,15 @@ def calculate_symbol_checks(elf, sym_tree, symbols):
 
 class File:
     '''Represents and ELF file'''
-    def __init__(self, path=None, header=None, data=None):
+    def __init__(self, path=None, header=None, data=None, memory_addr=None, core_elf=None):
         self.path = path
         self.file_off = 0
         self.error = None
         self.header = None
+        # If this ELF file is being loaded from memory, this will be valid.
+        self.memory_addr = memory_addr
+        #  If the core file ELF created this ELF from memory, this is the core ELF file.
+        self.core_elf = core_elf
         if header is not None:
             self.header = header
             header.elf = self
@@ -2994,7 +3226,7 @@ class File:
         return None
 
     def get_uuid_bytes(self):
-        build_id = self.get_note("GNU", NT.GNU_BUILD_ID_TAG)
+        build_id = self.get_note("GNU", NT_LINUX.GNU_BUILD_ID_TAG)
         if build_id:
             build_id.data.seek(0)
             return build_id.data.read_size(build_id.data.get_size())
@@ -3050,6 +3282,58 @@ class File:
                     if notes:
                         self.notes.extend(notes)
         return self.notes
+
+    def get_elf_from_core_memory(self, path, base_addr):
+        nt_file_note = self.get_note(['CORE', 'LINUX'], NT_LINUX.FILE)
+        if nt_file_note is None:
+            return None
+        nt_files = nt_file_note.get_entries()
+        nt_file = nt_files.get_entry_containing_address(base_addr)
+        if nt_file:
+            start_addr = nt_file.start
+            end_addr = nt_files.get_end_address_of_consecutive_ranges(nt_file)
+            path = nt_file.path
+        else:
+            ph = self.get_program_headers_by_vaddr_in_file(base_addr)
+            if ph is None:
+                return None
+            start_addr = ph.p_vaddr
+            end_addr = start_addr + ph.p_memsz
+        elf_data = self.read_memory_as_data(start_addr, end_addr - start_addr)
+        if elf_data is None:
+            return None
+
+        return File(path=path, header=None, data=elf_data, memory_addr=start_addr, core_elf=self)
+
+    def dump_core_info(self, options, f=sys.stdout):
+        nt_file_note = self.get_note(['CORE', 'LINUX'], NT_LINUX.FILE)
+        if nt_file_note is None:
+            f.write('error: no NT_FILE note was found')
+            return
+        nt_files = nt_file_note.get_entries()
+        exe_nt_file = nt_files.get_elf_header_entry(self)
+        if exe_nt_file is None:
+            f.write('error: not able to find the executable in NT_FILE\n')
+            return
+        elf_end_addr = nt_files.get_end_address_of_consecutive_ranges(exe_nt_file)
+        elf_header_data = self.read_memory_as_data(exe_nt_file.start, elf_end_addr - exe_nt_file.start)
+        if elf_header_data is None:
+            f.write('error: Unable to read the executable ELF header from %#x\n' % (exe_nt_file.start))
+            return
+        exe_elf = File(path=exe_nt_file.path, header=None, data=elf_header_data, memory_addr=exe_nt_file.start, core_elf=self)
+        if options.verbose:
+            nt_files.dump(f=f)
+            self.dump_auxv(options)
+            exe_elf.dump_file_summary(f=f)
+            exe_elf.dump_program_headers(options, f=f)
+        r_debug_addr = exe_elf.get_first_dynamic_entry_value(DT.DEBUG)
+        if r_debug_addr is None:
+            f.write('error: Unable to the DT_DEBUG value from the ELF dynamic table.\n')
+            return
+        r_debug = RDEBUG.decode(r_debug_addr, self, exe_nt_file.path)
+        r_debug.dump(options)
+
+
 
 
     def get_note(self, name_or_names, type):
@@ -3380,10 +3664,10 @@ class File:
         '''Many ELF dymnamic tags have values that are file addresses. These
         addresses are often the value of the section's sh_addr and can be
         looked up accordingly.'''
-        dyn = self.get_first_dymamic_entry(d_tag)
-        if dyn is None:
+        d_val = self.get_first_dynamic_entry_value(d_tag)
+        if d_val is None:
             return None
-        return self.get_section_by_addr(dyn.d_val)
+        return self.get_section_by_addr(d_val)
 
     def get_section_contents_by_name(self, section_name):
         sections = self.get_sections_by_name(section_name)
@@ -3463,11 +3747,11 @@ class File:
         for ph in self.get_program_headers_by_type(PT.LOAD):
             if ph.contains_vaddr_in_file(addr):
                 offset = addr - ph.p_vaddr
-                bytes_left = ph.p_filesz - offset
-                if bytes_left <= 0:
-                    return None
-                if size > bytes_left:
-                    size = bytes_left
+                # bytes_left = ph.p_filesz - offset
+                # if bytes_left <= 0:
+                #     return None
+                # if size > bytes_left:
+                #     size = bytes_left
                 file_offset = offset + ph.p_offset
                 self.data.push_offset_and_seek(file_offset)
                 data = self.data.read_data(size)
@@ -3485,11 +3769,11 @@ class File:
         for ph in self.get_program_headers_by_type(PT.LOAD):
             if ph.contains_vaddr_in_file(addr):
                 offset = addr - ph.p_vaddr
-                bytes_left = ph.p_filesz - offset
-                if bytes_left <= 0:
-                    return None
-                if size > bytes_left:
-                    size = bytes_left
+                # bytes_left = ph.p_filesz - offset
+                # if bytes_left <= 0:
+                #     return None
+                # if size > bytes_left:
+                #     size = bytes_left
                 file_offset = offset + ph.p_offset
                 self.data.push_offset_and_seek(file_offset)
                 bytes = self.data.read_size(size)
@@ -3582,22 +3866,22 @@ class File:
         calculate_symbol_checks(self, sym_tree, self.get_dynsym())
         return sym_tree
 
-    def get_dynamic(self):
+    def get_dynamic(self) -> list[ELFDynamic]:
         '''Get the array of dynamic entries in this ELF file.'''
         if self.dynamic is None and self.is_valid():
             self.dynamic = list()
             data = None
-            sections = self.get_section_headers()
-            for section in sections:
-                if section.sh_type == SHT.DYNAMIC:
-                    sh = sections[section.sh_link]
-                    self.dynstr = StringTable(sh.get_contents_as_extractor())
-                    data = section.get_contents_as_extractor()
-                    break
+            ph = self.get_program_header_by_type(PT.DYNAMIC)
+            if ph:
+                data = ph.get_contents_as_extractor()
             if data is None:
-                ph = self.get_program_header_by_type(PT.DYNAMIC)
-                if ph:
-                    data = ph.get_contents_as_extractor()
+                sections = self.get_section_headers()
+                for section in sections:
+                    if section.sh_type == SHT.DYNAMIC:
+                        sh = sections[section.sh_link]
+                        self.dynstr = StringTable(sh.get_contents_as_extractor())
+                        data = section.get_contents_as_extractor()
+                        break
             if data is not None:
                 index = 0
                 while 1:
@@ -3609,12 +3893,12 @@ class File:
 
         return self.dynamic
 
-    def get_first_dymamic_entry(self, d_tag):
-        '''Get the first dynamic entry whose tag is "d_tag"'''
+    def get_first_dynamic_entry_value(self, d_tag):
+        '''Get the first dynamic entry's value whose tag is "d_tag"'''
         entries = self.get_dynamic()
         for dyn in entries:
             if dyn.d_tag == d_tag:
-                return dyn
+                return dyn.d_val
         return None
 
     def get_symbol_containing_address(self, addr):
@@ -3721,6 +4005,22 @@ class File:
             f.write('  - Type:            SectionHeaderTable\n')
             f.write('    NoHeaders:       true\n')
 
+    def dump_program_headers(self, options, f=sys.stdout):
+        f.write('Program headers:\n')
+        ProgramHeader.dump_header(f=f)
+        program_headers = self.get_program_headers()
+        for program_header in program_headers:
+            program_header.dump(flat=True, f=f)
+            f.write('\n')
+        f.write('\n')
+
+    def dump_auxv(self, options, f=sys.stdout):
+        note = self.get_note(['CORE', 'LINUX'], NT_LINUX.AUXV)
+        if note:
+            note.dump(options, elf=self)
+        else:
+            print('error: no NT_AUXV found in notes')
+
     def dump(self, options, f=sys.stdout):
         if not options.api:
             self.dump_file_summary(f=f)
@@ -3730,14 +4030,7 @@ class File:
                 if options.dump_program_headers:
                     f.write('\n')
             if options.dump_program_headers:
-                f.write('Program headers:\n')
-                ProgramHeader.dump_header(f=f)
-                program_headers = self.get_program_headers()
-                for program_header in program_headers:
-                    program_header.dump(flat=True, f=f)
-                    f.write('\n')
-                f.write('\n')
-
+                self.dump_program_headers(options, f=f)
             if options.dump_section_headers:
                 sections = self.get_section_headers()
                 for section in sections:
@@ -3794,7 +4087,7 @@ class File:
                     # Get the hex bytes from this string
                     uuid_bytes = binascii.unhexlify(uuid_hex_only)
                     # Create a note for the GNU build ID
-                    note = Note("GNU", NT.GNU_BUILD_ID_TAG,
+                    note = Note("GNU", NT_LINUX.GNU_BUILD_ID_TAG,
                                 self.create_extractor(io.BytesIO(uuid_bytes)))
                     # Make a temp file and encode the above note object into
                     # the file so we can use objcopy to insert the note into
@@ -3936,17 +4229,15 @@ class File:
                 if not self.dump_program_headers_with_type(options, PT.NOTE):
                     self.dump_section_headers_with_type(options, SHT.NOTE)
             if options.dump_auxv:
-                note = self.get_note(['CORE', 'LINUX'], NT.AUXV)
-                if note:
-                    note.dump(options, elf=self)
-                else:
-                    print('error: no NT_AUXV found in notes')
+                self.dump_auxv(options)
             if options.dump_nt_file:
-                note = self.get_note(['CORE', 'LINUX'], NT.FILE)
+                note = self.get_note(['CORE', 'LINUX'], NT_LINUX.FILE)
                 if note:
                     note.dump(options, elf=self)
                 else:
                     print('error: no NT_FILE found in notes')
+            if options.core_info:
+                self.dump_core_info(options, f=f)
             if options.dump_dynamic:
                 dynamic_entries = self.get_dynamic()
                 for dynamic_entry in dynamic_entries:
@@ -4095,6 +4386,15 @@ class File:
                 func_info.dump(options.verbose)
             dwarf.options.handle_options(options, self, f)
 
+    def get_gnu_build_id(self):
+        gnu_build_id_note = self.get_note(['GNU'], NT_GNU.BUILD_ID)
+        if gnu_build_id_note is None:
+            return None
+        uuid_bytes = gnu_build_id_note.data.get_all_bytes()
+        if uuid_bytes:
+            return uuid_bytes
+        return None
+
     def get_api_info(self):
         symbols = self.get_symbols()
         api_info = dict()
@@ -4183,6 +4483,8 @@ def user_specified_options(options):
     if options.dump_auxv:
         return True
     if options.dump_nt_file:
+        return True
+    if options.core_info:
         return True
     if options.section_names:
         return True
@@ -4539,6 +4841,12 @@ def main():
         dest='dump_nt_file',
         help='Dump NT_FILE notes.',
         default=False)
+    parser.add_option(
+        '--core-info',
+        action='store_true',
+        dest='core_info',
+        default=False,
+        help='Dump core file information.')
     parser.add_option(
         '-N', '--num-per-line',
         dest='num_per_line',
