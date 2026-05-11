@@ -2710,20 +2710,23 @@ class RMAP:
       struct link_map *prev;
     };
     '''
-    def __init__(self, base_addr, path_ptr, path, dyn_addr, next, prev):
+    def __init__(self, base_addr, elf_addr, path_ptr, path, dyn_addr, next, prev):
         self.base_addr = base_addr
+        self.elf_addr = elf_addr
         self.path_ptr = path_ptr
         self.path = path
         self.dyn_addr = dyn_addr
         self.next = next
         self.prev = prev
         self.uuid = None
+        self.elf_header_in_core_memory = False
 
     def dump(self, options, f=sys.stdout):
         if options.verbose:
-            f.write('%#16.16x %#16.16x %#16.16x %#16.16x %#16.16x %-45s %s\n' % (self.base_addr, self.path_ptr, self.dyn_addr, self.next, self.prev, self.get_uuid_str(), self.path))
+            f.write('%#16.16x %#16.16x %#16.16x %#16.16x %#16.16x %#16.16x %-45s %s\n' % (self.base_addr, self.elf_addr, self.path_ptr, self.dyn_addr, self.next, self.prev, self.get_uuid_str(), self.path))
         else:
-            f.write('%#16.16x %-45s %s\n' % (self.base_addr, self.get_uuid_str(), self.path))
+            in_mem = ' ' if self.elf_header_in_core_memory else '*'
+            f.write('%#16.16x%s %-45s %s\n' % (self.elf_addr, in_mem, self.get_uuid_str(), self.path))
 
     def get_uuid_str(self):
         if self.uuid:
@@ -2737,11 +2740,11 @@ class RMAP:
     @staticmethod
     def dump_header(options, f=sys.stdout):
         if options.verbose:
-            f.write('base_addr          path               dyn_addr           next               prev               UUID                                          Path\n')
-            f.write('------------------ ------------------ ------------------ ------------------ ------------------ ============================================= =================================\n')
+            f.write('base_addr          elf_addr           path               dyn_addr           next               prev               UUID                                          Path\n')
+            f.write('------------------ ================== ------------------ ------------------ ------------------ ------------------ ============================================= =================================\n')
         else:
-            f.write('Load Address       UUID                                          Path\n')
-            f.write('------------------ --------------------------------------------- -------------------------------------\n')
+            f.write('Load Address        UUID                                          Path\n')
+            f.write('------------------  --------------------------------------------- -------------------------------------\n')
 
     @classmethod
     def decode(cls, addr, core_elf):
@@ -2756,7 +2759,15 @@ class RMAP:
         next = data.get_address()
         prev = data.get_address()
 
-        return cls(base_addr, path_ptr, path, dyn_addr, next, prev)
+        elf_addr = base_addr
+        if base_addr == 0:
+            # Fixup the main executable so we get the right load address
+            # and path.
+            exe_nt_file = core_elf.get_nt_file_entry_for_executable()
+            if exe_nt_file:
+                elf_addr = exe_nt_file.start
+                path = exe_nt_file.path
+        return cls(base_addr, elf_addr, path_ptr, path, dyn_addr, next, prev)
 
 class RDEBUG:
     '''
@@ -2801,7 +2812,7 @@ class RDEBUG:
             rmap.dump(options, f=f)
 
     @classmethod
-    def decode(cls, addr, core_elf, exe_path):
+    def decode(cls, addr, core_elf):
         data: FileExtract = core_elf.read_memory_as_data(addr, 40)
         if data is None:
             return None
@@ -2819,13 +2830,18 @@ class RDEBUG:
             rmap = RMAP.decode(map_ptr, core_elf)
             if rmap is None:
                 break
-            if not rmap.path:
-                rmap.path = exe_path
-            rmap_elf = core_elf.get_elf_from_core_memory(rmap.path, rmap.base_addr)
-            if rmap_elf:
-                gnu_build_id = rmap_elf.get_gnu_build_id()
-                if gnu_build_id:
-                    rmap.uuid = gnu_build_id
+            rmap.elf_header_in_core_memory = core_elf.get_program_headers_by_vaddr_in_file(rmap.elf_addr)
+            if rmap.elf_header_in_core_memory:
+                rmap_elf = core_elf.get_elf_from_core_memory(rmap.path, rmap.elf_addr)
+                if rmap_elf:
+                    gnu_build_id = rmap_elf.get_gnu_build_id()
+                    if gnu_build_id:
+                        rmap.uuid = gnu_build_id
+            # rmap_elf = core_elf.get_elf_from_core_memory(rmap.path, rmap.base_addr)
+            # if rmap_elf:
+            #     gnu_build_id = rmap_elf.get_gnu_build_id()
+            #     if gnu_build_id:
+            #         rmap.uuid = gnu_build_id
             maps.append(rmap)
             map_ptr = rmap.next
         return cls(addr, r_version, r_map, r_brk, r_state, r_ldbase, maps)
@@ -3305,6 +3321,13 @@ class File:
 
         return File(path=path, header=None, data=elf_data, memory_addr=start_addr, core_elf=self)
 
+    def get_nt_file_entry_for_executable(self):
+        nt_file_note = self.get_note(['CORE', 'LINUX'], NT_LINUX.FILE)
+        if nt_file_note is None:
+            return None
+        nt_files = nt_file_note.get_entries()
+        return nt_files.get_elf_header_entry(self)
+
     def dump_core_info(self, options, f=sys.stdout):
         nt_file_note = self.get_note(['CORE', 'LINUX'], NT_LINUX.FILE)
         if nt_file_note is None:
@@ -3332,14 +3355,15 @@ class File:
         exe_elf = File(path=exe_nt_file.path, header=None, data=elf_header_data, memory_addr=exe_nt_file.start, core_elf=self)
         if options.verbose:
             nt_files.dump(f=f)
-            self.dump_auxv(options)
             exe_elf.dump_file_summary(f=f)
             exe_elf.dump_program_headers(options, f=f)
+        # Dump the auxilary vector as it has intersting core info.
+        self.dump_auxv(options)
         r_debug_addr = exe_elf.get_first_dynamic_entry_value(DT.DEBUG)
         if r_debug_addr is None:
             f.write('error: Unable to the DT_DEBUG value from the ELF dynamic table.\n')
             return
-        r_debug = RDEBUG.decode(r_debug_addr, self, exe_nt_file.path)
+        r_debug = RDEBUG.decode(r_debug_addr, self)
         r_debug.dump(options)
 
 
@@ -3877,29 +3901,29 @@ class File:
 
     def get_dynamic(self) -> list[ELFDynamic]:
         '''Get the array of dynamic entries in this ELF file.'''
-        if self.dynamic is None and self.is_valid():
+        if self.dynamic is None:
             self.dynamic = list()
-            data = None
-            ph = self.get_program_header_by_type(PT.DYNAMIC)
-            if ph:
-                data = ph.get_contents_as_extractor()
-            if data is None:
-                sections = self.get_section_headers()
-                for section in sections:
-                    if section.sh_type == SHT.DYNAMIC:
-                        sh = sections[section.sh_link]
-                        self.dynstr = StringTable(sh.get_contents_as_extractor())
-                        data = section.get_contents_as_extractor()
-                        break
-            if data is not None:
-                index = 0
-                while 1:
-                    dynamic = ELFDynamic(index, data)
-                    if dynamic.d_tag == DT.NULL:
-                        break
-                    self.dynamic.append(dynamic)
-                    index += 1
-
+            if self.is_valid():
+                data = None
+                ph = self.get_program_header_by_type(PT.DYNAMIC)
+                if ph:
+                    data = ph.get_contents_as_extractor()
+                if data is None:
+                    sections = self.get_section_headers()
+                    for section in sections:
+                        if section.sh_type == SHT.DYNAMIC:
+                            sh = sections[section.sh_link]
+                            self.dynstr = StringTable(sh.get_contents_as_extractor())
+                            data = section.get_contents_as_extractor()
+                            break
+                if data is not None:
+                    index = 0
+                    while 1:
+                        dynamic = ELFDynamic(index, data)
+                        if dynamic.d_tag == DT.NULL:
+                            break
+                        self.dynamic.append(dynamic)
+                        index += 1
         return self.dynamic
 
     def get_first_dynamic_entry_value(self, d_tag):
