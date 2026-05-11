@@ -488,7 +488,7 @@ class FileExtract:
                 self.datarel is not None or self.funcrel is not None):
             offset = self.tell()
         bytes = self.read_size(byte_size)
-        if len(bytes) == byte_size:
+        if bytes and len(bytes) == byte_size:
             # If we have GNU PC, text, data or function relative data, then
             # track the correct relative offset when handing out data that is
             # a subset of this data
