@@ -2556,14 +2556,14 @@ class Note_NT_PRPSINFO(Note):
     def get_content_class(cls):
         return PRPSINFO
 
-    def get_prpsinfo(self):
+    def get_content(self):
         if self.prpsinfo is None:
             self.prpsinfo = PRPSINFO.decode(self.data)
         return self.prpsinfo
 
     def dump(self, options, f=sys.stdout, elf=None):
         super().dump_header(options, f=f)
-        self.get_prpsinfo().dump(f=f)
+        self.get_content().dump(f=f)
 
 
 class Note_NT_PRSTATUS(Note):
@@ -3315,6 +3315,15 @@ class File:
         if exe_nt_file is None:
             f.write('error: not able to find the executable in NT_FILE\n')
             return
+        f.write('\nNT_FILE entry for main executable:\n  ')
+        exe_nt_file.dump(f=f)
+        prpsinfo = self.get_note(['CORE', 'LINUX'], NT_LINUX.PRPSINFO)
+        if prpsinfo:
+            f.write('\nNT_PRPSINFO info:\n')
+            f.write(f'  prpsinfo.pr_pid = {prpsinfo.get_content().pr_pid}\n')
+            f.write(f'  prpsinfo.pr_fname = "{prpsinfo.get_content().pr_fname}"\n')
+            f.write(f'  prpsinfo.pr_psargs = "{prpsinfo.get_content().pr_psargs}"\n')
+            f.write('\n')
         elf_end_addr = nt_files.get_end_address_of_consecutive_ranges(exe_nt_file)
         elf_header_data = self.read_memory_as_data(exe_nt_file.start, elf_end_addr - exe_nt_file.start)
         if elf_header_data is None:
