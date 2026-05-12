@@ -2703,30 +2703,30 @@ class RMAP:
     A class the represents a "link_map" struct for the dynamic loader on linux.
 
     struct link_map {
-      void *base_addr;
-      const char *path;
-      void *dyn_addr;
-      struct link_map *next;
-      struct link_map *prev;
+      void *l_addr; // Difference between the address in the ELF file and the address in memory.
+      const char *l_name; // Absolute pathname where object was found.
+      void *l_ld; // Dynamic section of the shared object
+      struct link_map *l_prev;
+      struct link_map *l_next;
     };
     '''
-    def __init__(self, base_addr, elf_addr, path_ptr, path, dyn_addr, next, prev):
-        self.base_addr = base_addr
+    def __init__(self, l_addr, l_name, l_ld, l_next, l_prev, elf_addr, path):
+        self.l_addr = l_addr
+        self.l_name = l_name
+        self.l_ld = l_ld
+        self.l_next = l_next
+        self.l_prev = l_prev
         self.elf_addr = elf_addr
-        self.path_ptr = path_ptr
         self.path = path
-        self.dyn_addr = dyn_addr
-        self.next = next
-        self.prev = prev
         self.uuid = None
         self.elf_header_in_core_memory = False
 
     def dump(self, options, f=sys.stdout):
         if options.verbose:
-            f.write('%#16.16x %#16.16x %#16.16x %#16.16x %#16.16x %#16.16x %-45s %s\n' % (self.base_addr, self.elf_addr, self.path_ptr, self.dyn_addr, self.next, self.prev, self.get_uuid_str(), self.path))
+            f.write('%#16.16x %#16.16x %#16.16x %#16.16x %-45s %s\n' % (self.l_addr, self.l_name, self.l_ld, self.elf_addr, self.get_uuid_str(), self.path))
         else:
-            in_mem = ' ' if self.elf_header_in_core_memory else '*'
-            f.write('%#16.16x%s %-45s %s\n' % (self.elf_addr, in_mem, self.get_uuid_str(), self.path))
+            in_mem = '\u2713' if self.elf_header_in_core_memory else ' '
+            f.write('%#16.16x %s %-45s %s\n' % (self.elf_addr, in_mem, self.get_uuid_str(), self.path))
 
     def get_uuid_str(self):
         if self.uuid:
@@ -2740,11 +2740,12 @@ class RMAP:
     @staticmethod
     def dump_header(options, f=sys.stdout):
         if options.verbose:
-            f.write('base_addr          elf_addr           path               dyn_addr           next               prev               UUID                                          Path\n')
-            f.write('------------------ ================== ------------------ ------------------ ------------------ ------------------ ============================================= =================================\n')
+            f.write('l_addr             l_name             l_ld               elf_addr           UUID                                          Path\n')
+            f.write('------------------ ------------------ ------------------ ================== ============================================= =================================\n')
         else:
-            f.write('Load Address        UUID                                          Path\n')
-            f.write('------------------  --------------------------------------------- -------------------------------------\n')
+            f.write('M = ELF header is in core file memory\n')
+            f.write('Load Address       M UUID                                          Path\n')
+            f.write('------------------ - --------------------------------------------- -------------------------------------\n')
 
     @classmethod
     def decode(cls, addr, core_elf):
@@ -2752,22 +2753,22 @@ class RMAP:
         if data is None:
             return None
 
-        base_addr = data.get_address()
-        path_ptr = data.get_address()
-        path = core_elf.read_memory_as_c_string(path_ptr)
-        dyn_addr = data.get_address()
-        next = data.get_address()
-        prev = data.get_address()
+        l_addr = data.get_address()
+        l_name = data.get_address()
+        path = core_elf.read_memory_as_c_string(l_name)
+        l_ld = data.get_address()
+        l_next = data.get_address()
+        l_prev = data.get_address()
 
-        elf_addr = base_addr
-        if base_addr == 0:
+        elf_addr = l_addr
+        if l_addr == 0 or (path and len(path) == 0):
             # Fixup the main executable so we get the right load address
             # and path.
             exe_nt_file = core_elf.get_nt_file_entry_for_executable()
             if exe_nt_file:
                 elf_addr = exe_nt_file.start
                 path = exe_nt_file.path
-        return cls(base_addr, elf_addr, path_ptr, path, dyn_addr, next, prev)
+        return cls(l_addr, l_name, l_ld, l_next, l_prev, elf_addr, path)
 
 class RDEBUG:
     '''
@@ -2837,13 +2838,8 @@ class RDEBUG:
                     gnu_build_id = rmap_elf.get_gnu_build_id()
                     if gnu_build_id:
                         rmap.uuid = gnu_build_id
-            # rmap_elf = core_elf.get_elf_from_core_memory(rmap.path, rmap.base_addr)
-            # if rmap_elf:
-            #     gnu_build_id = rmap_elf.get_gnu_build_id()
-            #     if gnu_build_id:
-            #         rmap.uuid = gnu_build_id
             maps.append(rmap)
-            map_ptr = rmap.next
+            map_ptr = rmap.l_next
         return cls(addr, r_version, r_map, r_brk, r_state, r_ldbase, maps)
 
 
@@ -3343,10 +3339,13 @@ class File:
         prpsinfo = self.get_note(['CORE', 'LINUX'], NT_LINUX.PRPSINFO)
         if prpsinfo:
             f.write('\nNT_PRPSINFO info:\n')
-            f.write(f'  prpsinfo.pr_pid = {prpsinfo.get_content().pr_pid}\n')
-            f.write(f'  prpsinfo.pr_fname = "{prpsinfo.get_content().pr_fname}"\n')
-            f.write(f'  prpsinfo.pr_psargs = "{prpsinfo.get_content().pr_psargs}"\n')
-            f.write('\n')
+            if options.verbose:
+                prpsinfo.dump(options, f=f)
+            else:
+                f.write(f'  prpsinfo.pr_pid = {prpsinfo.get_content().pr_pid}\n')
+                f.write(f'  prpsinfo.pr_fname = "{prpsinfo.get_content().pr_fname}"\n')
+                f.write(f'  prpsinfo.pr_psargs = "{prpsinfo.get_content().pr_psargs}"\n')
+                f.write('\n')
         elf_end_addr = nt_files.get_end_address_of_consecutive_ranges(exe_nt_file)
         elf_header_data = self.read_memory_as_data(exe_nt_file.start, elf_end_addr - exe_nt_file.start)
         if elf_header_data is None:
@@ -3354,6 +3353,7 @@ class File:
             return
         exe_elf = File(path=exe_nt_file.path, header=None, data=elf_header_data, memory_addr=exe_nt_file.start, core_elf=self)
         if options.verbose:
+            f.write('\n')
             nt_files.dump(f=f)
             exe_elf.dump_file_summary(f=f)
             exe_elf.dump_program_headers(options, f=f)
@@ -4875,7 +4875,7 @@ def main():
         help='Dump NT_FILE notes.',
         default=False)
     parser.add_option(
-        '--core-info',
+        '-c', '--core-info',
         action='store_true',
         dest='core_info',
         default=False,
