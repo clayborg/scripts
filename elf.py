@@ -2761,7 +2761,7 @@ class RMAP:
         l_prev = data.get_address()
 
         elf_addr = l_addr
-        if l_addr == 0 or (path and len(path) == 0):
+        if l_addr == 0 or (not path and len(path) == 0):
             # Fixup the main executable so we get the right load address
             # and path.
             exe_nt_file = core_elf.get_nt_file_entry_for_executable()
@@ -3295,6 +3295,22 @@ class File:
                         self.notes.extend(notes)
         return self.notes
 
+    def get_executable_name_from_auxv_execfn(self):
+        '''
+        Get the executable name from a core file from the AT_EXECFN. This aux
+        value is the address of a string that contains the executable name
+        as a C string. If the executable was launched from a symlink, it will
+        be the symlink. The most reliable way to get the resolved executable
+        path is to get it from the NT_FILE note in the core file.
+        '''
+        auxv_note = self.get_note(['CORE', 'LINUX'], NT_LINUX.AUXV)
+        if auxv_note is None:
+            return None
+        addr = auxv_note.get(AT.EXECFN)
+        if addr is None:
+            return None
+        return self.read_memory_as_c_string(addr)
+
     def get_elf_from_core_memory(self, path, base_addr):
         nt_file_note = self.get_note(['CORE', 'LINUX'], NT_LINUX.FILE)
         if nt_file_note is None:
@@ -3325,17 +3341,40 @@ class File:
         return nt_files.get_elf_header_entry(self)
 
     def dump_core_info(self, options, f=sys.stdout):
+        if self.header.e_type != ET.CORE:
+            f.write(f'error: "{self.path}" is not a core file\n')
+            return
         nt_file_note = self.get_note(['CORE', 'LINUX'], NT_LINUX.FILE)
         if nt_file_note is None:
-            f.write('error: no NT_FILE note was found')
-            return
-        nt_files = nt_file_note.get_entries()
-        exe_nt_file = nt_files.get_elf_header_entry(self)
-        if exe_nt_file is None:
-            f.write('error: not able to find the executable in NT_FILE\n')
-            return
-        f.write('\nNT_FILE entry for main executable:\n  ')
-        exe_nt_file.dump(f=f)
+            f.write('error: no NT_FILE note was found\n')
+        else:
+            nt_files = nt_file_note.get_entries()
+            if options.verbose:
+                f.write('\n')
+                nt_files.dump(f=f)
+            exe_nt_file = nt_files.get_elf_header_entry(self)
+            if exe_nt_file is None:
+                f.write('error: not able to find the executable in NT_FILE\n')
+            else:
+                f.write('\nNT_FILE entry for main executable:\n  ')
+                exe_nt_file.dump(f=f)
+                elf_end_addr = nt_files.get_end_address_of_consecutive_ranges(exe_nt_file)
+                elf_header_data = self.read_memory_as_data(exe_nt_file.start, elf_end_addr - exe_nt_file.start)
+                if elf_header_data is None:
+                    f.write('error: Unable to read the executable ELF header from %#x\n' % (exe_nt_file.start))
+                else:
+                    exe_elf = File(path=exe_nt_file.path, header=None, data=elf_header_data, memory_addr=exe_nt_file.start, core_elf=self)
+                    if options.verbose:
+                        exe_elf.dump_file_summary(f=f)
+                        exe_elf.dump_program_headers(options, f=f)
+
+                    r_debug_addr = exe_elf.get_first_dynamic_entry_value(DT.DEBUG)
+                    if r_debug_addr is None:
+                        f.write('error: Unable to the DT_DEBUG value from the ELF dynamic table.\n')
+                        return
+                    r_debug = RDEBUG.decode(r_debug_addr, self)
+                    r_debug.dump(options)
+
         prpsinfo = self.get_note(['CORE', 'LINUX'], NT_LINUX.PRPSINFO)
         if prpsinfo:
             f.write('\nNT_PRPSINFO info:\n')
@@ -3346,25 +3385,12 @@ class File:
                 f.write(f'  prpsinfo.pr_fname = "{prpsinfo.get_content().pr_fname}"\n')
                 f.write(f'  prpsinfo.pr_psargs = "{prpsinfo.get_content().pr_psargs}"\n')
                 f.write('\n')
-        elf_end_addr = nt_files.get_end_address_of_consecutive_ranges(exe_nt_file)
-        elf_header_data = self.read_memory_as_data(exe_nt_file.start, elf_end_addr - exe_nt_file.start)
-        if elf_header_data is None:
-            f.write('error: Unable to read the executable ELF header from %#x\n' % (exe_nt_file.start))
-            return
-        exe_elf = File(path=exe_nt_file.path, header=None, data=elf_header_data, memory_addr=exe_nt_file.start, core_elf=self)
-        if options.verbose:
-            f.write('\n')
-            nt_files.dump(f=f)
-            exe_elf.dump_file_summary(f=f)
-            exe_elf.dump_program_headers(options, f=f)
+        execfn = self.get_executable_name_from_auxv_execfn()
+        if execfn is not None:
+            f.write(f'AT_EXECFN = "{execfn}"\n')
+
         # Dump the auxilary vector as it has intersting core info.
         self.dump_auxv(options)
-        r_debug_addr = exe_elf.get_first_dynamic_entry_value(DT.DEBUG)
-        if r_debug_addr is None:
-            f.write('error: Unable to the DT_DEBUG value from the ELF dynamic table.\n')
-            return
-        r_debug = RDEBUG.decode(r_debug_addr, self)
-        r_debug.dump(options)
 
 
 
