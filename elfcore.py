@@ -31,6 +31,13 @@ def create_option_parser() -> optparse.OptionParser:
              ' emitting PT_LOAD entries with no file size.')
 
     parser.add_option(
+        '--yaml',
+        action='store_true',
+        dest='emit_yaml',
+        default=False,
+        help='Save as yaml instead of a real core file.')
+
+    parser.add_option(
         '-a', '--address',
         type='int',
         metavar='ADDR',
@@ -115,7 +122,11 @@ def main():
                 if ph is not None:
                     ph.elf = min_core_elf
                     min_core_elf.add_program_header(ph)
-    min_core_elf.save(options.outfile)
+    if options.emit_yaml:
+        with open(options.outfile, 'w') as f:
+                    min_core_elf.encode_yaml(f)
+    else:
+        min_core_elf.save(options.outfile)
 
 
 
