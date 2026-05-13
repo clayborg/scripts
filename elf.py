@@ -3326,16 +3326,25 @@ class File:
             return None
         nt_files = nt_file_note.get_entries()
         nt_file = nt_files.get_entry_containing_address(base_addr)
+        ph = self.get_program_header_by_vaddr_in_file(base_addr)
+        # We won't be able to read memory if there is no matching program header
+        if ph is None:
+            return None
+        if ph.p_vaddr != base_addr:
+            raise ValueError("program header doesn't start at ELF header address")
         if nt_file:
             start_addr = nt_file.start
             end_addr = nt_files.get_end_address_of_consecutive_ranges(nt_file)
+            # Many times core files only contain the first page of the ELF 
+            # file. If we read too much we will get nothing back.
+            if ph.p_filesz < ph.p_memsz and (ph.p_vaddr + ph.p_filesz) < end_addr:
+                end_addr = ph.p_vaddr + ph.p_filesz
             path = nt_file.path
-        else:
-            ph = self.get_program_header_by_vaddr_in_file(base_addr)
-            if ph is None:
-                return None
+        elif ph is not None:
             start_addr = ph.p_vaddr
-            end_addr = start_addr + ph.p_memsz
+            end_addr = start_addr + ph.p_filesz
+        else:
+            return None
         elf_data = self.read_memory_as_data(start_addr, end_addr - start_addr)
         if elf_data is None:
             return None
