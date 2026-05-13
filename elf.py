@@ -1847,11 +1847,13 @@ class ProgramHeader:
         return self.p_vaddr <= vaddr and vaddr < (self.p_vaddr + self.p_memsz)
 
     @classmethod
-    def dump_header(self, f=sys.stdout):
+    def dump_header(self, f=sys.stdout, prefix=''):
+        f.write(prefix)
         f.write(('Index   p_type          p_flags    '
                     'p_offset           p_vaddr            '
                     'p_paddr            p_filesz           '
                     'p_memsz            p_align\n'))
+        f.write(prefix)
         f.write(('======= --------------- ---------- '
                     '------------------ ------------------ '
                     '------------------ ------------------ '
@@ -2710,7 +2712,8 @@ class RMAP:
       struct link_map *l_next;
     };
     '''
-    def __init__(self, l_addr, l_name, l_ld, l_next, l_prev, elf_addr, path):
+    def __init__(self, ptr, l_addr, l_name, l_ld, l_next, l_prev, elf_addr, path):
+        self.ptr = ptr  # Address in memory of this structure was read from.
         self.l_addr = l_addr
         self.l_name = l_name
         self.l_ld = l_ld
@@ -2721,8 +2724,24 @@ class RMAP:
         self.uuid = None
         self.elf_header_in_core_memory = False
 
+    @staticmethod
+    def dump_header(options, f=sys.stdout):
+        if options.debug:
+            f.write('link_map*          l_addr             l_name             l_ld               l_next             l_prev\n')
+            f.write('================== ------------------ ------------------ ------------------ ------------------ ------------------\n')
+        elif options.verbose:
+            f.write('l_addr             l_name             l_ld               elf_addr           UUID                                          Path\n')
+            f.write('------------------ ------------------ ------------------ ================== ============================================= =================================\n')
+        else:
+            f.write('M = ELF header is in core file memory\n')
+            f.write('Load Address       M UUID                                          Path\n')
+            f.write('------------------ - --------------------------------------------- -------------------------------------\n')
+
+
     def dump(self, options, f=sys.stdout):
-        if options.verbose:
+        if options.debug:
+            f.write('%#16.16x %#16.16x %#16.16x %#16.16x %#16.16x %#16.16x\n' % (self.ptr, self.l_addr, self.l_name, self.l_ld, self.l_next, self.l_prev))
+        elif options.verbose:
             f.write('%#16.16x %#16.16x %#16.16x %#16.16x %-45s %s\n' % (self.l_addr, self.l_name, self.l_ld, self.elf_addr, self.get_uuid_str(), self.path))
         else:
             in_mem = '\u2713' if self.elf_header_in_core_memory else ' '
@@ -2736,16 +2755,6 @@ class RMAP:
                 return s[0:8] + '-' + s[8:12] + '-' + s[12:16] +  '-' + s[16:20] +  '-' + s[20:32] +  '-' + s[32:40]
 
         return ''
-
-    @staticmethod
-    def dump_header(options, f=sys.stdout):
-        if options.verbose:
-            f.write('l_addr             l_name             l_ld               elf_addr           UUID                                          Path\n')
-            f.write('------------------ ------------------ ------------------ ================== ============================================= =================================\n')
-        else:
-            f.write('M = ELF header is in core file memory\n')
-            f.write('Load Address       M UUID                                          Path\n')
-            f.write('------------------ - --------------------------------------------- -------------------------------------\n')
 
     @classmethod
     def decode(cls, addr, core_elf):
@@ -2768,7 +2777,7 @@ class RMAP:
             if exe_nt_file:
                 elf_addr = exe_nt_file.start
                 path = exe_nt_file.path
-        return cls(l_addr, l_name, l_ld, l_next, l_prev, elf_addr, path)
+        return cls(addr, l_addr, l_name, l_ld, l_next, l_prev, elf_addr, path)
 
 class RDEBUG:
     '''
@@ -2831,7 +2840,7 @@ class RDEBUG:
             rmap = RMAP.decode(map_ptr, core_elf)
             if rmap is None:
                 break
-            rmap.elf_header_in_core_memory = core_elf.get_program_headers_by_vaddr_in_file(rmap.elf_addr)
+            rmap.elf_header_in_core_memory = core_elf.get_program_header_by_vaddr_in_file(rmap.elf_addr)
             if rmap.elf_header_in_core_memory:
                 rmap_elf = core_elf.get_elf_from_core_memory(rmap.path, rmap.elf_addr)
                 if rmap_elf:
@@ -2874,8 +2883,8 @@ class ELFDynamic:
         self.d_val = data.get_address()
 
     def dump(self, elf, f=sys.stdout):
-        f.write("[%3u] %-*s %#8.8x" % (self.index, DT.max_width(),
-                                       self.d_tag, self.d_val))
+        f.write("[%3u] %-*s %#16.16x" % (self.index, DT.max_width(),
+                                         self.d_tag, self.d_val))
         str = None
         desc = None
         bits = None
@@ -3322,7 +3331,7 @@ class File:
             end_addr = nt_files.get_end_address_of_consecutive_ranges(nt_file)
             path = nt_file.path
         else:
-            ph = self.get_program_headers_by_vaddr_in_file(base_addr)
+            ph = self.get_program_header_by_vaddr_in_file(base_addr)
             if ph is None:
                 return None
             start_addr = ph.p_vaddr
@@ -3339,6 +3348,12 @@ class File:
             return None
         nt_files = nt_file_note.get_entries()
         return nt_files.get_elf_header_entry(self)
+
+    def dump_dynamic(self, options, f=sys.stdout):
+        f.write('Dynamic section:\n')
+        dynamic_entries = self.get_dynamic()
+        for dynamic_entry in dynamic_entries:
+            dynamic_entry.dump(elf=self, f=f)
 
     def dump_core_info(self, options, f=sys.stdout):
         if self.header.e_type != ET.CORE:
@@ -3364,10 +3379,11 @@ class File:
                     f.write('error: Unable to read the executable ELF header from %#x\n' % (exe_nt_file.start))
                 else:
                     exe_elf = File(path=exe_nt_file.path, header=None, data=elf_header_data, memory_addr=exe_nt_file.start, core_elf=self)
+                    f.write('Found main executable in memory @ %#16.16x:\n' % (exe_nt_file.start))
+                    exe_elf.dump_file_summary(f=f)
                     if options.verbose:
-                        exe_elf.dump_file_summary(f=f)
                         exe_elf.dump_program_headers(options, f=f)
-
+                    exe_elf.dump_dynamic(options, f=f)
                     r_debug_addr = exe_elf.get_first_dynamic_entry_value(DT.DEBUG)
                     if r_debug_addr is None:
                         f.write('error: Unable to the DT_DEBUG value from the ELF dynamic table.\n')
@@ -3384,10 +3400,6 @@ class File:
                 f.write(f'  prpsinfo.pr_pid = {prpsinfo.get_content().pr_pid}\n')
                 f.write(f'  prpsinfo.pr_fname = "{prpsinfo.get_content().pr_fname}"\n')
                 f.write(f'  prpsinfo.pr_psargs = "{prpsinfo.get_content().pr_psargs}"\n')
-                f.write('\n')
-        execfn = self.get_executable_name_from_auxv_execfn()
-        if execfn is not None:
-            f.write(f'AT_EXECFN = "{execfn}"\n')
 
         # Dump the auxilary vector as it has intersting core info.
         self.dump_auxv(options)
@@ -3777,9 +3789,15 @@ class File:
                 matching_phs.append(ph)
         return matching_phs
 
-    def get_program_headers_by_vaddr_in_file(self, vaddr) -> ProgramHeader | None:
+    def get_program_header_by_vaddr_in_file(self, vaddr) -> ProgramHeader | None:
         for ph in self.get_program_headers():
             if ph.contains_vaddr_in_file(vaddr):
+                return ph
+        return None
+
+    def get_program_header_by_vaddr_in_memory(self, vaddr) -> ProgramHeader | None:
+        for ph in self.get_program_headers():
+            if ph.contains_vaddr_in_memory(vaddr):
                 return ph
         return None
 
@@ -4090,6 +4108,16 @@ class File:
                     f.write('\n')
             if options.dump_program_headers:
                 self.dump_program_headers(options, f=f)
+            if options.ph_addrs:
+                for addr in options.ph_addrs:
+                    ProgramHeader.dump_header(f=f, prefix=' ' * 20)
+                    ph = self.get_program_header_by_vaddr_in_memory(addr)
+                    f.write('%#16.16x: ' % (addr))
+                    if ph:
+                        ph.dump(options, f=f)
+                    else:
+                        f.write('error: no program header contains this address')
+                    f.write('\n')
             if options.dump_section_headers:
                 sections = self.get_section_headers()
                 for section in sections:
@@ -4298,9 +4326,7 @@ class File:
             if options.core_info:
                 self.dump_core_info(options, f=f)
             if options.dump_dynamic:
-                dynamic_entries = self.get_dynamic()
-                for dynamic_entry in dynamic_entries:
-                    dynamic_entry.dump(elf=self, f=f)
+                self.dump_dynamic(options, f=f)
             if options.undefined:
                 symbols = self.get_symbols()
                 if symbols:
@@ -4533,7 +4559,7 @@ def user_specified_options(options):
         return True
     if options.dump_dynamic:
         return True
-    if options.dump_program_headers:
+    if options.ph_addrs:
         return True
     if options.dump_header:
         return True
@@ -4842,6 +4868,12 @@ def main():
         dest='dump_program_headers',
         help='Dump the ELF program headers',
         default=False)
+    parser.add_option(
+        '--ph-addr',
+        type='int',
+        action='append',
+        dest='ph_addrs',
+        help='Lookup a program header by the p_vaddr. This optoin can be specified multiple times.')
     parser.add_option(
         '-S', '--sh', '--section-headers', '--sections',
         action='store_true',
