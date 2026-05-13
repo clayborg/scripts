@@ -3335,17 +3335,13 @@ class File:
         if nt_file:
             start_addr = nt_file.start
             end_addr = nt_files.get_end_address_of_consecutive_ranges(nt_file)
-            # Many times core files only contain the first page of the ELF 
-            # file. If we read too much we will get nothing back.
-            if ph.p_filesz < ph.p_memsz and (ph.p_vaddr + ph.p_filesz) < end_addr:
-                end_addr = ph.p_vaddr + ph.p_filesz
             path = nt_file.path
         elif ph is not None:
             start_addr = ph.p_vaddr
             end_addr = start_addr + ph.p_filesz
         else:
             return None
-        elf_data = self.read_memory_as_data(start_addr, end_addr - start_addr)
+        elf_data = self.read_memory_as_data(start_addr, end_addr - start_addr, read_partial=True)
         if elf_data is None:
             return None
 
@@ -3383,7 +3379,7 @@ class File:
                 f.write('\nNT_FILE entry for main executable:\n  ')
                 exe_nt_file.dump(f=f)
                 elf_end_addr = nt_files.get_end_address_of_consecutive_ranges(exe_nt_file)
-                elf_header_data = self.read_memory_as_data(exe_nt_file.start, elf_end_addr - exe_nt_file.start)
+                elf_header_data = self.read_memory_as_data(exe_nt_file.start, elf_end_addr - exe_nt_file.start, read_partial=True)
                 if elf_header_data is None:
                     f.write('error: Unable to read the executable ELF header from %#x\n' % (exe_nt_file.start))
                 else:
@@ -3823,56 +3819,66 @@ class File:
                     return program_headers[i]
         return None
 
-    def read_memory_as_data(self, addr, size) -> FileExtract | None:
+    def read_memory_as_data(self, addr, size, read_partial=False) -> FileExtract | None:
         '''
         Read the memory as bytes at the specified address and return it as a
         bytes FileExtract from a program header vaddr.
         '''
-        if self.data is None:
-            return None
-        for ph in self.get_program_headers_by_type(PT.LOAD):
-            if ph.contains_vaddr_in_file(addr):
-                offset = addr - ph.p_vaddr
-                # bytes_left = ph.p_filesz - offset
-                # if bytes_left <= 0:
-                #     return None
-                # if size > bytes_left:
-                #     size = bytes_left
-                file_offset = offset + ph.p_offset
-                self.data.push_offset_and_seek(file_offset)
-                data = self.data.read_data(size)
-                self.data.pop_offset_and_seek()
-                return data
+        bytes = self.read_memory_as_bytes(addr, size, read_partial)
+        if bytes:
+            return self.create_extractor(io.BytesIO(bytes))
         return None
 
-    def read_memory_as_bytes(self, addr, size) -> bytes | None:
+    def read_memory_as_bytes(self, vaddr, size, read_partial=False) -> bytes | None:
         '''
         Read the memory as bytes at the specified address and return it as a
-        bytes object from a program header vaddr.
+        bytes object from a program header vaddr. The memory being read can be
+        read from multiple different program headers. If the program header
+        has a p_filesz of zero, but a non-zero p_memsz, those bytes should be
+        read as zeros. If read_partial is True, return whatever bytes were
+        read even if the full size could not be satisfied.
         '''
         if self.data is None:
             return None
-        for ph in self.get_program_headers_by_type(PT.LOAD):
-            if ph.contains_vaddr_in_file(addr):
-                offset = addr - ph.p_vaddr
-                # bytes_left = ph.p_filesz - offset
-                # if bytes_left <= 0:
-                #     return None
-                # if size > bytes_left:
-                #     size = bytes_left
+        load_phdrs = self.get_program_headers_by_type(PT.LOAD)
+        result = bytearray()
+        curr_addr = vaddr
+        end_addr = vaddr + size
+        while curr_addr < end_addr:
+            ph = None
+            for p in load_phdrs:
+                if p.p_filesz == 0 and p.p_memsz > 0:
+                    if p.contains_vaddr_in_memory(curr_addr):
+                        ph = p
+                        break
+                elif p.contains_vaddr_in_file(curr_addr):
+                    ph = p
+                    break
+            if ph is None:
+                if read_partial and len(result) > 0:
+                    return bytes(result)
+                return None
+            offset = curr_addr - ph.p_vaddr
+            bytes_needed = end_addr - curr_addr
+            if ph.p_filesz == 0:
+                bytes_available = ph.p_memsz - offset
+                bytes_to_read = min(bytes_needed, bytes_available)
+                result.extend(b'\x00' * bytes_to_read)
+            else:
+                bytes_available = ph.p_filesz - offset
+                bytes_to_read = min(bytes_needed, bytes_available)
                 file_offset = offset + ph.p_offset
                 self.data.push_offset_and_seek(file_offset)
-                bytes = self.data.read_size(size)
+                result.extend(self.data.read_size(bytes_to_read))
                 self.data.pop_offset_and_seek()
-                return bytes
-        return None
+            curr_addr += bytes_to_read
+        return bytes(result)
 
     def read_memory_as_c_string(self, addr):
         '''
         Read a null-terminated C string from memory at the specified address
         from a program header vaddr.
         '''
-
         if self.data is None:
             return None
         for ph in self.get_program_headers_by_type(PT.LOAD):
