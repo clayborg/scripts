@@ -1846,6 +1846,11 @@ class Mach:
             self.sections.append(Mach.Section())
             self.dwarf = -1
             self.base_address = None
+            # 64 bit mach-o files have sections with 32 bit file offsets. If any
+            # section data end will exceed UINT32_MAX, then we need to do some
+            # bookkeeping to ensure we can access this data correctly.
+            self.section_offset_adjust = 0
+
 
         def get_address_mask(self):
             return self.arch.get_address_mask()
@@ -3468,9 +3473,16 @@ class Mach:
             for i in range(self.nsects):
                 section = Mach.Section()
                 section.unpack(is_64, data)
+                # Handle section overflow since mach-o sections in 64 bit files
+                # still only have a 32 bit offset.
+                end_section_offset = section.offset + section.size
+                section.offset += mach_file.section_offset_adjust
+                if end_section_offset >= UINT32_MAX:
+                    mach_file.section_offset_adjust += end_section_offset & 0xFFFFFFFF00000000
                 section.index = len(mach_file.sections)
                 mach_file.sections.append(section)
                 self.sections.append(section)
+
 
         def get_flags_as_string(self):
             flag_strings = []
