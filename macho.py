@@ -2425,6 +2425,7 @@ class Mach:
             if num_sections > 1:
                 file_ranges = AddressRangeList()
                 self.sections[1].dump_header()
+                warned_over_4gb = False
                 for sect_idx in range(1, num_sections):
                     sect = self.sections[sect_idx]
                     print("%s" % sect)
@@ -2436,15 +2437,16 @@ class Mach:
                                   "another")
                         file_ranges.append(file_range)
                         if file_range.hi > UINT32_MAX:
-                            print("warning: this section's end file range %#x "
-                                  "(%#x + %#x) exceeds the 4GB boundary, "
-                                  "subsequent sections might have their "
-                                  "offsets truncated since 64 bit mach-o "
-                                  "sections only have 32 bit offsets." % (
+                            if not warned_over_4gb:
+                                warned_over_4gb = True
+                                print("warning: this section's end file range "
+                                      "%#x (%#x + %#x) exceeds the 4GB "
+                                      "boundary.\nThis script knows how to deal "
+                                      "with this but other tools might not "
+                                      "parse this correctly because sections "
+                                      "only have 32 bit file offsets in the 64 "
+                                      "bit mach-o file format." % (
                                         file_range.hi, sect.offset, sect.size))
-                            print("         Subsequent section might have an "
-                                  "offset greater than or equal to %#8.8x" % (
-                                        file_range.hi & 0xFFFFFFFF))
 
         def dump_section_contents(self, options):
             saved_section_to_disk = False
